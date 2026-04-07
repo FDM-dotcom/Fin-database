@@ -118,6 +118,9 @@ class Label(Base):
 
 class Transaction(Base):
     __tablename__ = "transactions"
+    __table_args__ = (
+        UniqueConstraint("account_id", "external_id", name="uq_transaction_account_external"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     account_id: Mapped[int] = mapped_column(Integer, ForeignKey("accounts.id", ondelete="RESTRICT"), nullable=False)
@@ -136,6 +139,9 @@ class Transaction(Base):
     import_source: Mapped[ImportSourceType] = mapped_column(Enum(ImportSourceType, name="import_source_type"), nullable=False)
     # Alle originele velden van de bankexport. Benaderbaar in regels via "raw:<kolomnaam>".
     raw_import_data: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    # Bronspecifieke unieke ID: Rabobank Volgnr, of SHA256-hash voor bunq.
+    # Samen met account_id uniek → voorkomt dubbele imports.
+    external_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
