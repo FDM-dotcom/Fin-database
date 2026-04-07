@@ -6,6 +6,7 @@ Gebruik:
     python import_csv.py pad/naar/bestand.csv
     python import_csv.py pad/naar/map/
     python import_csv.py bestand.csv --iban NL69RABO0376834404
+    python import_csv.py bestand.csv --categorize       # direct categoriseren na import
 
 Vereisten:
   - .env met DATABASE_URL ingesteld
@@ -23,6 +24,7 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
+from app.categorizer import run_on_all
 from app.database import SessionLocal
 from app.importers.runner import import_directory, import_file
 
@@ -44,6 +46,11 @@ def main() -> int:
             "IBAN van de rekening. Overschrijft het IBAN uit de CSV. "
             "Handig als de CSV het eigen IBAN niet bevat."
         ),
+    )
+    parser.add_argument(
+        "--categorize",
+        action="store_true",
+        help="Categoriseer nieuw geïmporteerde transacties direct na import.",
     )
     parser.add_argument(
         "--dry-run",
@@ -71,7 +78,7 @@ def main() -> int:
         else:
             db.commit()
 
-        # Samenvatting
+        # Samenvatting import
         print()
         total_in = total_sk = total_err = 0
         for r in results:
@@ -83,6 +90,17 @@ def main() -> int:
                 print(f"  ✗ {err}", file=sys.stderr)
 
         print(f"\nTotaal: {total_in} ingevoegd, {total_sk} overgeslagen, {total_err} fout(en).")
+
+        # Categoriseren na import
+        if args.categorize and not args.dry_run and total_in > 0:
+            print("\nCategoriseren...")
+            cat_stats = run_on_all(db, overwrite=False)
+            db.commit()
+            print(
+                f"Categorisatie: {cat_stats['changed']} gecategoriseerd, "
+                f"{cat_stats['no_match']} zonder match."
+            )
+
         return 0 if total_err == 0 else 1
 
     except Exception as exc:
