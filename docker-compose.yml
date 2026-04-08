@@ -1,22 +1,23 @@
 services:
+
+  # ── PostgreSQL database ──────────────────────────────────────────────────
   db:
     image: postgres:16-alpine
     container_name: fin_db
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-findb}
-      POSTGRES_USER: ${POSTGRES_USER:-finuser}
+      POSTGRES_DB:       ${POSTGRES_DB:-findb}
+      POSTGRES_USER:     ${POSTGRES_USER:-finuser}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-finuser} -d ${POSTGRES_DB:-findb}"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
+  # ── FastAPI backend (voert automatisch migraties uit bij start) ──────────
   api:
     build:
       context: .
@@ -25,36 +26,32 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-finuser}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-findb}
-    ports:
-      - "8000:8000"
     depends_on:
       db:
         condition: service_healthy
-    volumes:
-      - .:/app
+    # API is intern bereikbaar voor nginx; niet direct blootgesteld
+    expose:
+      - "8000"
 
+  # ── React frontend via nginx (poort 80) ──────────────────────────────────
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: fin_frontend
     restart: unless-stopped
-    environment:
-      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
     ports:
-      - "5173:5173"
+      - "${FRONTEND_PORT:-80}:80"
     depends_on:
       - api
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
 
+  # ── pgAdmin (database-beheer, poort 5050) ────────────────────────────────
   pgadmin:
     image: dpage/pgadmin4:latest
     container_name: fin_pgadmin
     restart: unless-stopped
     environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
+      PGADMIN_DEFAULT_EMAIL:    ${PGADMIN_EMAIL}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
     ports:
       - "5050:80"
