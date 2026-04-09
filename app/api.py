@@ -23,7 +23,8 @@ from sqlalchemy.orm import Session, joinedload
 from app.categorizer import run_on_all
 from app.database import SessionLocal
 from app.importers.runner import import_file as do_import
-from app.models import Account, CategorizationRule, Category, RuleCondition, Transaction
+from app.importers.runner import preview_file as do_preview
+from app.models import Account, AccountAlias, CategorizationRule, Category, RuleCondition, Transaction
 
 app = FastAPI(title="Fin Database API", version="1.0.0")
 
@@ -119,6 +120,12 @@ class RuleIn(BaseModel):
 class RulePreviewIn(BaseModel):
     logic: str = "AND"
     conditions: list[ConditionIn]
+
+
+class AliasIn(BaseModel):
+    iban: str
+    display_name: str
+    notes: Optional[str] = None
 
 
 class CategoryIn(BaseModel):
@@ -476,3 +483,181 @@ def list_accounts(db: Session = Depends(get_db)):
         }
         for a in accs
     ]
+
+
+# ------------------------------------------------------------------
+# Account aliases (IBAN → weergavenaam)
+# BELANGRIJK: /suggestions en /bulk VOOR /{iban} declareren
+# ------------------------------------------------------------------
+
+def _alias(a: AccountAlias) -> dict:
+    return {"iban": a.iban, "display_name": a.display_name, "notes": a.notes}
+
+
+@app.get("/api/aliases")
+def list_aliases(db: Session = Depends(get_db)):
+    return [_alias(a) for a in db.query(AccountAlias).order_by(AccountAlias.iban).all()]
+
+
+@app.get("/api/aliases/suggestions")
+def alias_suggestions(limit: int = 15, db: Session = Depends(get_db)):
+    """Top N tegenpartij-IBAN's die in transacties voorkomen maar nog geen alias hebben."""
+    from sqlalchemy import func
+
+    existing = db.query(AccountAlias.iban)
+    results = (
+        db.query(
+            Transaction.counterparty_iban,
+            func.count(Transaction.id).label("n"),
+        )
+        .filter(Transaction.counterparty_iban.isnot(None))
+        .filter(Transaction.counterparty_iban != "")
+        .filter(Transaction.counterparty_iban.notin_(existing))
+        .group_by(Transaction.counterparty_iban)
+        .order_by(func.count(Transaction.id).desc())
+        .limit(limit)
+        .all()
+    )
+    return [{"iban": r.counterparty_iban, "transaction_count": r.n} for r in results]
+
+
+@app.post("/api/aliases", status_code=201)
+def create_alias(body: AliasIn, db: Session = Depends(get_db)):
+    existing = db.query(AccountAlias).filter(AccountAlias.iban == body.iban.strip()).first()
+    if existing:
+        existing.display_name = body.display_name.strip()
+        existing.notes = body.notes or None
+        db.commit()
+        return _alias(existing)
+    alias = AccountAlias(
+        iban=body.iban.strip().upper(),
+        display_name=body.display_name.strip(),
+        notes=body.notes or None,
+    )
+    db.add(alias)
+    db.commit()
+    return _alias(alias)
+
+
+@app.put("/api/aliases/{iban}")
+def update_alias(iban: str, body: AliasIn, db: Session = Depends(get_db)):
+    alias = db.query(AccountAlias).filter(AccountAlias.iban == iban).first()
+    if not alias:
+        raise HTTPException(status_code=404, detail="Alias niet gevonden")
+    alias.display_name = body.display_name.strip()
+    alias.notes = body.notes or None
+    db.commit()
+    return _alias(alias)
+
+
+@app.delete("/api/aliases/{iban}", status_code=204)
+def delete_alias(iban: str, db: Session = Depends(get_db)):
+    alias = db.query(AccountAlias).filter(AccountAlias.iban == iban).first()
+    if not alias:
+        raise HTTPException(status_code=404, detail="Alias niet gevonden")
+    db.delete(alias)
+    db.commit()
+
+
+@app.post("/api/aliases/import-csv")
+async def import_aliases_csv(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """
+    Importeer IBAN-aliassen vanuit een CSV-bestand.
+    Verwacht formaat: IBAN;Naam (of IBAN,Naam), optionele headerrij.
+    Bestaande aliassen worden bijgewerkt.
+    """
+    import csv as csv_mod
+    import io
+
+    content = (await file.read()).decode("utf-8-sig", errors="replace")
+    lines = content.splitlines()
+    if not lines:
+        raise HTTPException(status_code=400, detail="Leeg bestand")
+
+    # Detecteer scheidingsteken
+    delimiter = ";" if lines[0].count(";") >= lines[0].count(",") else ","
+
+    reader = csv_mod.reader(io.StringIO(content), delimiter=delimiter)
+    created = updated = 0
+    errors: list[str] = []
+
+    for line_no, row in enumerate(reader, 1):
+        if len(row) < 2:
+            continue
+        iban_raw = row[0].strip().upper()
+        name_raw = row[1].strip()
+
+        # Header overslaan
+        if "IBAN" in iban_raw or not iban_raw or not name_raw:
+            continue
+
+        existing = db.query(AccountAlias).filter(AccountAlias.iban == iban_raw).first()
+        if existing:
+            existing.display_name = name_raw
+            updated += 1
+        else:
+            db.add(AccountAlias(iban=iban_raw, display_name=name_raw))
+            created += 1
+
+    try:
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Fout bij opslaan: {exc}")
+
+    return {"created": created, "updated": updated, "errors": errors}
+
+
+# ------------------------------------------------------------------
+# Categories (uitgebreid — met overzicht incl. transactietellingen)
+# ------------------------------------------------------------------
+
+@app.get("/api/categories/overview")
+def categories_overview(db: Session = Depends(get_db)):
+    """Categorieën met transactietellingen, gesorteerd op naam."""
+    from sqlalchemy import func
+
+    rows = (
+        db.query(Category, func.count(Transaction.id).label("n"))
+        .outerjoin(Transaction, Transaction.category_id == Category.id)
+        .group_by(Category.id)
+        .order_by(Category.category, Category.subcategory, Category.destination)
+        .all()
+    )
+    return [
+        {**_cat(cat), "transaction_count": n}
+        for cat, n in rows
+    ]
+
+
+# ------------------------------------------------------------------
+# Import preview (dry-run vóór daadwerkelijke import)
+# ------------------------------------------------------------------
+
+@app.post("/api/import/preview")
+async def preview_import(
+    file: UploadFile = File(...),
+    account_iban: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+):
+    """
+    Parseer een CSV-bestand en geef een samenvatting terug zonder iets op te slaan:
+    - Gedetecteerd formaat
+    - Kolomkoppeling
+    - Aantal nieuwe / al bestaande transacties
+    - Eerste 5 voorbeeldrijen
+    """
+    suffix = Path(file.filename or "upload.csv").suffix or ".csv"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = Path(tmp.name)
+
+    try:
+        result = do_preview(tmp_path, db, account_iban=account_iban or None)
+        return result
+    finally:
+        os.unlink(tmp_path)

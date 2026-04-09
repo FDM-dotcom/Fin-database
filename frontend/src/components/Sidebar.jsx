@@ -6,6 +6,10 @@ const NAV = [
   { to: '/import', icon: 'upload_file', label: 'Import' },
 ]
 
+const NAV_BOTTOM = [
+  { to: '/configuratie', icon: 'settings', label: 'Configuratie' },
+]
+
 export default function Sidebar({ dark, onToggleTheme }) {
   const bg = dark ? 'bg-[#251913]' : 'bg-[#fff1ec]'
   const text = dark ? 'text-[#f6ddd4]/50' : 'text-[#251913]/60'
@@ -45,8 +49,22 @@ export default function Sidebar({ dark, onToggleTheme }) {
         ))}
       </nav>
 
-      {/* Bottom */}
+      {/* Bottom nav + theme toggle */}
       <div className="mt-auto space-y-1 pt-4 border-t border-[#40312b]/30">
+        {NAV_BOTTOM.map(item => (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            className={({ isActive }) =>
+              `flex items-center gap-3 px-4 py-3 rounded-sm cursor-pointer transition-all font-bold text-xs uppercase tracking-widest ${
+                isActive ? activeClass : `${text} ${hoverClass}`
+              }`
+            }
+          >
+            <span className="material-symbols-outlined text-lg">{item.icon}</span>
+            <span>{item.label}</span>
+          </NavLink>
+        ))}
         <button
           onClick={onToggleTheme}
           className={`flex items-center gap-3 px-4 py-3 w-full rounded-sm transition-all font-bold text-xs uppercase tracking-widest ${text} ${hoverClass}`}

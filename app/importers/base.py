@@ -11,7 +11,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.models import Account, Transaction
+from app.models import Account, AccountAlias, Transaction
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +66,11 @@ class BaseImporter(ABC):
             result.errors.append(f"Kan bestand niet lezen: {exc}")
             return result
 
+        # Laad alle IBAN-aliassen eenmalig voor naamverrijking
+        aliases: dict[str, str] = {
+            a.iban: a.display_name for a in db.query(AccountAlias).all()
+        }
+
         for row in rows:
             try:
                 iban = account_iban or row.get("own_iban")
@@ -81,14 +86,20 @@ class BaseImporter(ABC):
                     result.skipped += 1
                     continue
 
+                # Verrijk naam tegenpartij vanuit IBAN-alias als de CSV die niet bevat
+                cp_iban = row.get("counterparty_iban") or None
+                cp_name = row.get("counterparty_name") or None
+                if cp_name is None and cp_iban:
+                    cp_name = aliases.get(cp_iban)
+
                 trx = Transaction(
                     account_id=account.id,
                     date=row["date"],
                     interest_date=row.get("interest_date"),
                     amount=row["amount"],
                     balance_after=row.get("balance_after"),
-                    counterparty_iban=row.get("counterparty_iban") or None,
-                    counterparty_name=row.get("counterparty_name") or None,
+                    counterparty_iban=cp_iban,
+                    counterparty_name=cp_name,
                     description=row.get("description") or None,
                     is_internal_transfer=False,
                     import_source=self.source_name,

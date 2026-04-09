@@ -5,6 +5,7 @@ import RulesOverview from './pages/RulesOverview'
 import RuleConfiguration from './pages/RuleConfiguration'
 import ImportData from './pages/ImportData'
 import Dashboard from './pages/Dashboard'
+import Configuratie from './pages/Configuratie'
 
 export default function App() {
   const [dark, setDark] = useState(true)
@@ -23,6 +24,7 @@ export default function App() {
           <Route path="/rules/new" element={<RuleConfiguration dark={dark} />} />
           <Route path="/rules/:id" element={<RuleConfiguration dark={dark} />} />
           <Route path="/import" element={<ImportData dark={dark} />} />
+          <Route path="/configuratie" element={<Configuratie dark={dark} />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </div>

@@ -47,13 +47,27 @@ export const api = {
   },
 
   categories: {
-    list:   ()     => req('GET',    '/api/categories'),
-    create: (body) => req('POST',   '/api/categories', body),
-    delete: (id)   => req('DELETE', `/api/categories/${id}`),
+    list:     ()     => req('GET',    '/api/categories'),
+    overview: ()     => req('GET',    '/api/categories/overview'),
+    create:   (body) => req('POST',   '/api/categories', body),
+    delete:   (id)   => req('DELETE', `/api/categories/${id}`),
   },
 
   accounts: {
     list: () => req('GET', '/api/accounts'),
+  },
+
+  aliases: {
+    list:        ()         => req('GET',    '/api/aliases'),
+    suggestions: ()         => req('GET',    '/api/aliases/suggestions'),
+    create:      (body)     => req('POST',   '/api/aliases', body),
+    update:      (iban, b)  => req('PUT',    `/api/aliases/${iban}`, b),
+    delete:      (iban)     => req('DELETE', `/api/aliases/${iban}`),
+    importCsv:   (file)     => {
+      const fd = new FormData()
+      fd.append('file', file)
+      return req('POST', '/api/aliases/import-csv', fd)
+    },
   },
 
   import: (file, accountIban, runCategorize) => {
@@ -62,5 +76,12 @@ export const api = {
     if (accountIban) fd.append('account_iban', accountIban)
     fd.append('run_categorize', runCategorize ? 'true' : 'false')
     return req('POST', '/api/import', fd)
+  },
+
+  importPreview: (file, accountIban) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    if (accountIban) fd.append('account_iban', accountIban)
+    return req('POST', '/api/import/preview', fd)
   },
 }

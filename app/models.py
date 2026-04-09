@@ -162,6 +162,22 @@ class TransactionLabel(Base):
     label: Mapped["Label"] = relationship("Label", back_populates="transaction_labels")
 
 
+class AccountAlias(Base):
+    """
+    IBAN → weergavenaam mapping voor tegenpartijrekeningen.
+
+    Wordt toegepast tijdens import: als een transactie een tegenpartij-IBAN
+    heeft maar geen naam, wordt de alias opgezocht en gebruikt.
+    """
+    __tablename__ = "account_aliases"
+
+    iban: Mapped[str] = mapped_column(String(34), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class CategorizationRule(Base):
     """
     Categorisatieregel met AND/OR logica over meerdere condities.
