@@ -8,6 +8,7 @@ In Docker: zie docker-compose.yml
 """
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -15,6 +16,7 @@ from typing import Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload
 
@@ -114,6 +116,11 @@ class RuleIn(BaseModel):
     conditions: list[ConditionIn]
 
 
+class RulePreviewIn(BaseModel):
+    logic: str = "AND"
+    conditions: list[ConditionIn]
+
+
 class CategoryIn(BaseModel):
     category: str
     subcategory: Optional[str] = None
@@ -191,6 +198,158 @@ def list_rules(db: Session = Depends(get_db)):
         .all()
     )
     return [_rule(r) for r in rules]
+
+
+@app.post("/api/rules/preview")
+def preview_rule(body: RulePreviewIn, db: Session = Depends(get_db)):
+    """Return up to 50 transactions that would match this (unsaved) rule."""
+    from app.categorizer import _apply_operator, _get_field_value
+
+    transactions = (
+        db.query(Transaction)
+        .order_by(Transaction.date.desc())
+        .limit(2000)
+        .all()
+    )
+
+    matches = []
+    for trx in transactions:
+        results = []
+        for cond in body.conditions:
+            fv = _get_field_value(cond.field_to_match, trx)
+            try:
+                results.append(_apply_operator(cond.operator, fv, cond.match_value))
+            except Exception:
+                results.append(False)
+
+        if not results:
+            continue
+        matched = all(results) if body.logic == "AND" else any(results)
+        if matched:
+            matches.append({
+                "id": trx.id,
+                "date": trx.date.isoformat() if trx.date else None,
+                "amount": str(trx.amount),
+                "description": trx.description,
+                "counterparty_name": trx.counterparty_name,
+                "counterparty_iban": trx.counterparty_iban,
+                "category_id": trx.category_id,
+            })
+            if len(matches) >= 50:
+                break
+
+    return {"count": len(matches), "transactions": matches[:20]}
+
+
+@app.get("/api/rules/export")
+def export_rules(db: Session = Depends(get_db)):
+    """Download all rules as a JSON file."""
+    rules = (
+        db.query(CategorizationRule)
+        .options(
+            joinedload(CategorizationRule.conditions),
+            joinedload(CategorizationRule.category),
+        )
+        .order_by(CategorizationRule.priority, CategorizationRule.id)
+        .all()
+    )
+    data = [
+        {
+            "name": r.name,
+            "priority": r.priority,
+            "logic": r.logic.value if hasattr(r.logic, "value") else r.logic,
+            "is_active": r.is_active,
+            "notes": r.notes,
+            "category": _cat(r.category),
+            "conditions": [
+                {
+                    "field_to_match": c.field_to_match,
+                    "operator": c.operator.value if hasattr(c.operator, "value") else c.operator,
+                    "match_value": c.match_value,
+                }
+                for c in r.conditions
+            ],
+        }
+        for r in rules
+    ]
+    content = json.dumps(data, indent=2, ensure_ascii=False)
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={"Content-Disposition": "attachment; filename=td-finance-rules.json"},
+    )
+
+
+@app.post("/api/rules/import")
+async def import_rules(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """Import rules from an uploaded JSON file."""
+    raw = await file.read()
+    try:
+        rules_data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"Ongeldig JSON-bestand: {exc}")
+
+    if not isinstance(rules_data, list):
+        raise HTTPException(status_code=400, detail="JSON moet een lijst van regels zijn")
+
+    imported = 0
+    skipped = 0
+    errors: list[str] = []
+
+    for item in rules_data:
+        try:
+            cat_data = item.get("category")
+            if not cat_data:
+                errors.append(f"Regel '{item.get('name', '?')}': geen categorie opgegeven")
+                skipped += 1
+                continue
+
+            cat = db.query(Category).filter(
+                Category.category == cat_data.get("category"),
+                Category.subcategory == cat_data.get("subcategory"),
+                Category.destination == cat_data.get("destination"),
+            ).first()
+            if not cat:
+                cat = Category(
+                    category=cat_data.get("category"),
+                    subcategory=cat_data.get("subcategory") or None,
+                    destination=cat_data.get("destination") or None,
+                )
+                db.add(cat)
+                db.flush()
+
+            # Skip rules with duplicate names
+            if db.query(CategorizationRule).filter(CategorizationRule.name == item.get("name")).first():
+                skipped += 1
+                continue
+
+            rule = CategorizationRule(
+                name=item.get("name", "Geïmporteerde regel"),
+                priority=item.get("priority", 0),
+                logic=item.get("logic", "AND"),
+                category_id=cat.id,
+                is_active=item.get("is_active", True),
+                notes=item.get("notes"),
+            )
+            db.add(rule)
+            db.flush()
+            for cond in item.get("conditions", []):
+                db.add(RuleCondition(
+                    rule_id=rule.id,
+                    field_to_match=cond.get("field_to_match", "description"),
+                    operator=cond.get("operator", "contains"),
+                    match_value=cond.get("match_value"),
+                ))
+            imported += 1
+        except Exception as exc:
+            errors.append(f"Regel '{item.get('name', '?')}': {exc}")
+            skipped += 1
+
+    db.commit()
+    return {"imported": imported, "skipped": skipped, "errors": errors}
 
 
 @app.get("/api/rules/{rule_id}")

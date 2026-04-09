@@ -32,12 +32,18 @@ export const api = {
   stats: () => req('GET', '/api/stats'),
 
   rules: {
-    list:   ()       => req('GET',    '/api/rules'),
-    get:    (id)     => req('GET',    `/api/rules/${id}`),
-    create: (body)   => req('POST',   '/api/rules', body),
-    update: (id, b)  => req('PUT',    `/api/rules/${id}`, b),
-    delete: (id)     => req('DELETE', `/api/rules/${id}`),
-    toggle: (id)     => req('PATCH',  `/api/rules/${id}/toggle`),
+    list:       ()       => req('GET',    '/api/rules'),
+    get:        (id)     => req('GET',    `/api/rules/${id}`),
+    create:     (body)   => req('POST',   '/api/rules', body),
+    update:     (id, b)  => req('PUT',    `/api/rules/${id}`, b),
+    delete:     (id)     => req('DELETE', `/api/rules/${id}`),
+    toggle:     (id)     => req('PATCH',  `/api/rules/${id}/toggle`),
+    preview:    (body)   => req('POST',   '/api/rules/preview', body),
+    importJson: (file)   => {
+      const fd = new FormData()
+      fd.append('file', file)
+      return req('POST', '/api/rules/import', fd)
+    },
   },
 
   categories: {

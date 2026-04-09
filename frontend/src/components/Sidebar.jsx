@@ -20,7 +20,7 @@ export default function Sidebar({ dark, onToggleTheme }) {
     <aside className={`h-screen w-64 fixed left-0 top-0 ${bg} flex flex-col py-8 px-4 z-50`}>
       {/* Logo */}
       <div className="mb-10 px-4">
-        <h1 className="text-[#F46C22] font-black italic text-2xl tracking-tighter">FinDB</h1>
+        <h1 className="text-[#F46C22] font-black italic text-2xl tracking-tighter">TD Finance</h1>
         <p className={`text-[10px] tracking-[0.2em] uppercase font-bold ${dark ? 'text-[#f6ddd4]/40' : 'text-[#251913]/40'}`}>
           Financieel Overzicht
         </p>
