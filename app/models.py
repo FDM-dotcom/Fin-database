@@ -178,6 +178,21 @@ class AccountAlias(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class ColumnMappingProfile(Base):
+    """
+    Opgeslagen kolomkoppelingsprofielen voor de importwizard.
+    De mappings worden opgeslagen als JSONB-array van objecten:
+    [{targetColumn, sourceColumns, separator}]
+    """
+    __tablename__ = "column_mapping_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    bank_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    mappings: Mapped[list] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class CategorizationRule(Base):
     """
     Categorisatieregel met AND/OR logica over meerdere condities.

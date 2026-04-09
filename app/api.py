@@ -24,7 +24,7 @@ from app.categorizer import run_on_all
 from app.database import SessionLocal
 from app.importers.runner import import_file as do_import
 from app.importers.runner import preview_file as do_preview
-from app.models import Account, AccountAlias, CategorizationRule, Category, RuleCondition, Transaction
+from app.models import Account, AccountAlias, CategorizationRule, Category, ColumnMappingProfile, RuleCondition, Transaction
 
 app = FastAPI(title="Fin Database API", version="1.0.0")
 
@@ -132,6 +132,29 @@ class CategoryIn(BaseModel):
     category: str
     subcategory: Optional[str] = None
     destination: Optional[str] = None
+
+
+class MappingProfileIn(BaseModel):
+    name: str
+    bank_type: str
+    mappings: list
+
+
+class MappedTransactionIn(BaseModel):
+    date: str
+    amount: str
+    counterparty_iban: Optional[str] = None
+    counterparty_name: Optional[str] = None
+    description: Optional[str] = None
+    external_id: Optional[str] = None
+    bank_type: str = "unknown"
+    raw: Optional[dict] = None
+
+
+class MappedImportIn(BaseModel):
+    account_iban: str
+    run_categorize: bool = False
+    transactions: list[MappedTransactionIn]
 
 
 # ------------------------------------------------------------------
@@ -661,3 +684,328 @@ async def preview_import(
         return result
     finally:
         os.unlink(tmp_path)
+
+
+# ------------------------------------------------------------------
+# Transactions (lezen met paginatie, sorteren, filteren)
+# BELANGRIJK: /check-duplicates VOOR /{transaction_id} declareren
+# ------------------------------------------------------------------
+
+@app.post("/api/transactions/check-duplicates")
+def check_duplicates(body: dict, db: Session = Depends(get_db)):
+    """
+    Controleer welke external_id's al bestaan voor een account.
+    Body: {account_iban: str, external_ids: [str]}
+    Returns: {existing: [str], new: [str]}
+    """
+    account_iban = body.get("account_iban", "")
+    external_ids = body.get("external_ids", [])
+
+    if not external_ids:
+        return {"existing": [], "new": []}
+
+    account = db.query(Account).filter(Account.iban == account_iban).first()
+    if not account:
+        return {"existing": [], "new": external_ids}
+
+    existing_ids = set(
+        row[0]
+        for row in db.query(Transaction.external_id)
+        .filter(
+            Transaction.account_id == account.id,
+            Transaction.external_id.in_(external_ids),
+        )
+        .all()
+        if row[0]
+    )
+
+    return {
+        "existing": [eid for eid in external_ids if eid in existing_ids],
+        "new": [eid for eid in external_ids if eid not in existing_ids],
+    }
+
+
+@app.get("/api/transactions")
+def list_transactions(
+    page: int = 1,
+    page_size: int = 100,
+    sort_by: str = "date",
+    sort_dir: str = "desc",
+    search: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    amount_min: Optional[str] = None,
+    amount_max: Optional[str] = None,
+    category_id: Optional[int] = None,
+    account_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    from decimal import Decimal, InvalidOperation
+    from datetime import date as date_type
+
+    q = (
+        db.query(Transaction)
+        .options(
+            joinedload(Transaction.account),
+            joinedload(Transaction.category),
+        )
+    )
+
+    if search:
+        term = f"%{search}%"
+        q = q.filter(
+            Transaction.description.ilike(term)
+            | Transaction.counterparty_name.ilike(term)
+            | Transaction.counterparty_iban.ilike(term)
+        )
+    if date_from:
+        try:
+            q = q.filter(Transaction.date >= date_type.fromisoformat(date_from))
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            q = q.filter(Transaction.date <= date_type.fromisoformat(date_to))
+        except ValueError:
+            pass
+    if amount_min:
+        try:
+            q = q.filter(Transaction.amount >= Decimal(amount_min))
+        except InvalidOperation:
+            pass
+    if amount_max:
+        try:
+            q = q.filter(Transaction.amount <= Decimal(amount_max))
+        except InvalidOperation:
+            pass
+    if category_id is not None:
+        if category_id == 0:
+            q = q.filter(Transaction.category_id.is_(None))
+        else:
+            q = q.filter(Transaction.category_id == category_id)
+    if account_id is not None:
+        q = q.filter(Transaction.account_id == account_id)
+
+    total = q.count()
+
+    sort_col = {
+        "date": Transaction.date,
+        "amount": Transaction.amount,
+        "counterparty_name": Transaction.counterparty_name,
+        "description": Transaction.description,
+    }.get(sort_by, Transaction.date)
+
+    if sort_dir == "asc":
+        q = q.order_by(sort_col.asc())
+    else:
+        q = q.order_by(sort_col.desc())
+
+    offset = (page - 1) * page_size
+    items = q.offset(offset).limit(page_size).all()
+
+    def _trx(t):
+        cat = _cat(t.category) if t.category else None
+        return {
+            "id": t.id,
+            "date": t.date.isoformat() if t.date else None,
+            "amount": str(t.amount),
+            "counterparty_iban": t.counterparty_iban,
+            "counterparty_name": t.counterparty_name,
+            "description": t.description,
+            "category_id": t.category_id,
+            "category": cat,
+            "account_id": t.account_id,
+            "account_name": t.account.name if t.account else None,
+            "is_internal_transfer": t.is_internal_transfer,
+            "import_source": t.import_source.value if t.import_source else None,
+            "created_at": t.created_at.isoformat() if t.created_at else None,
+        }
+
+    return {
+        "items": [_trx(t) for t in items],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "pages": max(1, (total + page_size - 1) // page_size),
+    }
+
+
+# ------------------------------------------------------------------
+# Mapping profiles (voor importwizard)
+# ------------------------------------------------------------------
+
+def _profile(p: ColumnMappingProfile) -> dict:
+    return {
+        "id": p.id,
+        "name": p.name,
+        "bank_type": p.bank_type,
+        "mappings": p.mappings,
+        "created_at": p.created_at.isoformat() if p.created_at else None,
+    }
+
+
+@app.get("/api/mapping-profiles")
+def list_mapping_profiles(bank_type: Optional[str] = None, db: Session = Depends(get_db)):
+    q = db.query(ColumnMappingProfile)
+    if bank_type:
+        q = q.filter(ColumnMappingProfile.bank_type == bank_type)
+    return [_profile(p) for p in q.order_by(ColumnMappingProfile.id).all()]
+
+
+@app.post("/api/mapping-profiles", status_code=201)
+def create_mapping_profile(body: MappingProfileIn, db: Session = Depends(get_db)):
+    profile = ColumnMappingProfile(
+        name=body.name,
+        bank_type=body.bank_type,
+        mappings=body.mappings,
+    )
+    db.add(profile)
+    db.commit()
+    db.refresh(profile)
+    return _profile(profile)
+
+
+@app.delete("/api/mapping-profiles/{profile_id}", status_code=204)
+def delete_mapping_profile(profile_id: int, db: Session = Depends(get_db)):
+    profile = db.query(ColumnMappingProfile).filter(ColumnMappingProfile.id == profile_id).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profiel niet gevonden")
+    db.delete(profile)
+    db.commit()
+
+
+# ------------------------------------------------------------------
+# IBAN aliases — thin wrappers (hergebruiken account_aliases-logica)
+# ------------------------------------------------------------------
+
+@app.get("/api/iban-aliases")
+def list_iban_aliases(db: Session = Depends(get_db)):
+    """Alias voor /api/aliases — gebruikt door de importwizard."""
+    return [_alias(a) for a in db.query(AccountAlias).order_by(AccountAlias.iban).all()]
+
+
+@app.post("/api/iban-aliases", status_code=201)
+def create_iban_alias(body: AliasIn, db: Session = Depends(get_db)):
+    """Alias voor POST /api/aliases — upsert op IBAN."""
+    existing = db.query(AccountAlias).filter(AccountAlias.iban == body.iban.strip().upper()).first()
+    if existing:
+        existing.display_name = body.display_name.strip()
+        existing.notes = body.notes or None
+        db.commit()
+        return _alias(existing)
+    alias = AccountAlias(
+        iban=body.iban.strip().upper(),
+        display_name=body.display_name.strip(),
+        notes=body.notes or None,
+    )
+    db.add(alias)
+    db.commit()
+    return _alias(alias)
+
+
+# ------------------------------------------------------------------
+# Import/mapped — voor ING/ABN AMRO (pre-mapped vanuit browser)
+# ------------------------------------------------------------------
+
+@app.post("/api/import/mapped")
+def import_mapped(body: MappedImportIn, db: Session = Depends(get_db)):
+    """
+    Importeer vooraf door de browser gekoppelde transacties.
+    Gebruikt voor banken die niet native door de Python-importer worden ondersteund
+    (ING, ABN AMRO). De browser parseert, koppelt kolommen en stuurt
+    genormaliseerde transactiedata naar dit endpoint.
+    """
+    from decimal import Decimal, InvalidOperation
+    from datetime import date as date_type
+    import hashlib
+
+    # Zoek rekening op IBAN
+    account = db.query(Account).filter(Account.iban == body.account_iban.strip()).first()
+    if not account:
+        raise HTTPException(status_code=404, detail=f"Rekening niet gevonden voor IBAN {body.account_iban}")
+
+    # Laad aliassen voor verrijking tegenpartijnaam
+    aliases = {a.iban: a.display_name for a in db.query(AccountAlias).all()}
+
+    inserted = 0
+    skipped = 0
+    errors: list[str] = []
+
+    for i, trx_in in enumerate(body.transactions):
+        try:
+            # Datum parsen
+            try:
+                trx_date = date_type.fromisoformat(trx_in.date)
+            except ValueError:
+                errors.append(f"Rij {i + 1}: ongeldige datum '{trx_in.date}'")
+                skipped += 1
+                continue
+
+            # Bedrag parsen
+            try:
+                amount = Decimal(trx_in.amount.replace(",", "."))
+            except InvalidOperation:
+                errors.append(f"Rij {i + 1}: ongeldig bedrag '{trx_in.amount}'")
+                skipped += 1
+                continue
+
+            # External ID
+            ext_id = trx_in.external_id
+            if not ext_id:
+                raw_str = f"{trx_in.date}|{trx_in.amount}|{trx_in.counterparty_iban or ''}|{trx_in.description or ''}"
+                ext_id = hashlib.sha256(raw_str.encode()).hexdigest()
+
+            # Duplicate check
+            exists = db.query(Transaction).filter(
+                Transaction.account_id == account.id,
+                Transaction.external_id == ext_id,
+            ).first()
+            if exists:
+                skipped += 1
+                continue
+
+            # Tegenpartijnaam verrijken
+            cp_name = trx_in.counterparty_name or None
+            cp_iban = (trx_in.counterparty_iban or "").strip() or None
+            if cp_name is None and cp_iban:
+                cp_name = aliases.get(cp_iban)
+
+            from app.models import ImportSourceType
+            source_map = {
+                "rabobank": ImportSourceType.rabobank,
+                "bunq": ImportSourceType.bunq,
+            }
+            import_source = source_map.get(trx_in.bank_type, ImportSourceType.manual)
+
+            trx = Transaction(
+                account_id=account.id,
+                date=trx_date,
+                amount=amount,
+                counterparty_iban=cp_iban,
+                counterparty_name=cp_name,
+                description=trx_in.description or None,
+                external_id=ext_id,
+                import_source=import_source,
+                raw_import_data=trx_in.raw or {},
+            )
+            db.add(trx)
+            inserted += 1
+
+        except Exception as exc:
+            errors.append(f"Rij {i + 1}: {exc}")
+            skipped += 1
+
+    db.commit()
+
+    cat_stats = None
+    if body.run_categorize and inserted > 0:
+        cat_stats = run_on_all(db, overwrite=False)
+
+    return {
+        "source": body.transactions[0].bank_type if body.transactions else "unknown",
+        "file": "mapped-import",
+        "inserted": inserted,
+        "skipped": skipped,
+        "errors": errors,
+        "categorization": cat_stats,
+    }

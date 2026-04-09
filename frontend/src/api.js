@@ -84,4 +84,32 @@ export const api = {
     if (accountIban) fd.append('account_iban', accountIban)
     return req('POST', '/api/import/preview', fd)
   },
+
+  importMapped: (body) => req('POST', '/api/import/mapped', body),
+
+  transactions: {
+    list: (params = {}) => {
+      const qs = new URLSearchParams()
+      Object.entries(params).forEach(([k, v]) => {
+        if (v !== undefined && v !== null && v !== '') qs.set(k, v)
+      })
+      return req('GET', `/api/transactions?${qs}`)
+    },
+    checkDuplicates: (accountIban, externalIds) =>
+      req('POST', '/api/transactions/check-duplicates', {
+        account_iban: accountIban,
+        external_ids: externalIds,
+      }),
+  },
+
+  mappingProfiles: {
+    list:   (bankType)   => req('GET',    `/api/mapping-profiles${bankType ? `?bank_type=${bankType}` : ''}`),
+    create: (body)       => req('POST',   '/api/mapping-profiles', body),
+    delete: (id)         => req('DELETE', `/api/mapping-profiles/${id}`),
+  },
+
+  ibanAliases: {
+    list:   ()     => req('GET',  '/api/iban-aliases'),
+    create: (body) => req('POST', '/api/iban-aliases', body),
+  },
 }

@@ -2,8 +2,9 @@ import { NavLink } from 'react-router-dom'
 
 const NAV = [
   { to: '/', icon: 'dashboard', label: 'Dashboard', exact: true },
-  { to: '/rules', icon: 'rule', label: 'Regels' },
+  { to: '/transacties', icon: 'table_rows', label: 'Transacties' },
   { to: '/import', icon: 'upload_file', label: 'Import' },
+  { to: '/rules', icon: 'rule', label: 'Regels' },
 ]
 
 const NAV_BOTTOM = [
