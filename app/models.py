@@ -195,6 +195,24 @@ class ColumnMappingProfile(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class BudgetEntry(Base):
+    """
+    Maandelijks budget per categorie (top-level).
+    year_month formaat: "YYYY-MM" (bijv. "2024-01").
+    """
+    __tablename__ = "budget_entries"
+    __table_args__ = (
+        UniqueConstraint("year_month", "category_id", name="uq_budget_entry"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    year_month: Mapped[str] = mapped_column(String(7), nullable=False)
+    category_id: Mapped[int] = mapped_column(Integer, ForeignKey("categories.id", ondelete="CASCADE"), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+
+    category: Mapped["Category"] = relationship("Category")
+
+
 class CategorizationRule(Base):
     """
     Categorisatieregel met AND/OR logica over meerdere condities.

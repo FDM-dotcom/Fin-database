@@ -8,6 +8,7 @@ import ImportWizard from './pages/ImportWizard'
 import Dashboard from './pages/Dashboard'
 import Configuratie from './pages/Configuratie'
 import Transactions from './pages/Transactions'
+import Budget from './pages/Budget'
 
 export default function App() {
   const [dark, setDark] = useState(true)
@@ -28,6 +29,7 @@ export default function App() {
           <Route path="/import" element={<ImportWizard dark={dark} />} />
           <Route path="/import/legacy" element={<ImportData dark={dark} />} />
           <Route path="/transacties" element={<Transactions dark={dark} />} />
+          <Route path="/budget" element={<Budget dark={dark} />} />
           <Route path="/configuratie" element={<Configuratie dark={dark} />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

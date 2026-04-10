@@ -25,7 +25,7 @@ from app.database import SessionLocal
 from app.importers.runner import import_file as do_import
 from app.importers.runner import preview_file as do_preview
 from app.models import (
-    Account, AccountAlias, CategorizationRule, Category,
+    Account, AccountAlias, BudgetEntry, CategorizationRule, Category,
     ColumnMappingProfile, Label, RuleCondition, Transaction, TransactionLabel,
 )
 
@@ -173,6 +173,10 @@ class TransactionPatchIn(BaseModel):
 
 class LabelIn(BaseModel):
     name: str
+
+
+class BudgetEntryIn(BaseModel):
+    amount: float
 
 
 # ------------------------------------------------------------------
@@ -1068,6 +1072,193 @@ def create_label(body: LabelIn, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(label)
     return {"id": label.id, "name": label.name}
+
+
+# ------------------------------------------------------------------
+# Budget
+# ------------------------------------------------------------------
+
+@app.get("/api/budget/report")
+def budget_report(months: str, db: Session = Depends(get_db)):
+    """
+    Geeft een budgetrapport voor één of meer maanden terug.
+
+    Query param  months: kommagescheiden "YYYY-MM" waarden, bijv. "2024-01,2024-02"
+
+    Response:
+    {
+      months: ["2024-01", "2024-02"],
+      income: [
+        {
+          category: str,
+          rows: [{category_id, category, subcategory, destination,
+                  budgeted: {month: amount}, actual: {month: amount}}]
+        }
+      ],
+      expenses: [...],   // zelfde structuur
+      uncategorized: {month: amount}   // totalen per maand
+    }
+    """
+    from decimal import Decimal
+    from sqlalchemy import func, extract
+
+    month_list = [m.strip() for m in months.split(",") if m.strip()]
+    if not month_list:
+        raise HTTPException(status_code=400, detail="Geen maanden opgegeven")
+
+    # --- Budgetbedragen per (year_month, category_id) ---
+    budget_rows = (
+        db.query(BudgetEntry)
+        .options(joinedload(BudgetEntry.category))
+        .filter(BudgetEntry.year_month.in_(month_list))
+        .all()
+    )
+    # budgeted[(year_month, category_id)] = amount
+    budgeted: dict = {}
+    for be in budget_rows:
+        budgeted[(be.year_month, be.category_id)] = be.amount
+
+    # --- Werkelijke bedragen per (year_month, category_id) ---
+    # Gebruik YYYY-MM substring van de datumkolom
+    actuals_q = (
+        db.query(
+            func.to_char(Transaction.date, "YYYY-MM").label("ym"),
+            Transaction.category_id,
+            func.sum(Transaction.amount).label("total"),
+        )
+        .filter(
+            func.to_char(Transaction.date, "YYYY-MM").in_(month_list)
+        )
+        .group_by(
+            func.to_char(Transaction.date, "YYYY-MM"),
+            Transaction.category_id,
+        )
+        .all()
+    )
+    actuals: dict = {}
+    for ym, cat_id, total in actuals_q:
+        actuals[(ym, cat_id)] = total or Decimal("0")
+
+    # --- Alle categorieën laden ---
+    all_cats = db.query(Category).order_by(Category.category, Category.subcategory, Category.destination).all()
+
+    # Verzamel alle betrokken category_id's
+    involved_cat_ids = set()
+    for (ym, cat_id) in budgeted:
+        involved_cat_ids.add(cat_id)
+    for (ym, cat_id) in actuals:
+        if cat_id is not None:
+            involved_cat_ids.add(cat_id)
+
+    cat_map = {c.id: c for c in all_cats}
+
+    # Bepaal ongecategoriseerde totalen per maand
+    uncategorized: dict[str, str] = {}
+    for ym in month_list:
+        val = actuals.get((ym, None), Decimal("0"))
+        uncategorized[ym] = str(val)
+
+    # Groepeer categorieën op top-level categorie naam
+    # Bepaal of een category een inkomen of uitgave is op basis van teken
+    # van werkelijke transacties (of budgetbedrag als er geen transacties zijn)
+    # Inkomen = overwegend positief, Uitgaven = overwegend negatief
+    # We groeperen op Category.category (top-level naam)
+
+    # Bouw rijen per category_id
+    row_map: dict[int, dict] = {}
+    for cat_id in involved_cat_ids:
+        cat = cat_map.get(cat_id)
+        if cat is None:
+            continue
+        b_by_month = {}
+        a_by_month = {}
+        for ym in month_list:
+            b_val = budgeted.get((ym, cat_id))
+            b_by_month[ym] = str(b_val) if b_val is not None else None
+            a_val = actuals.get((ym, cat_id), Decimal("0"))
+            a_by_month[ym] = str(a_val)
+        row_map[cat_id] = {
+            "category_id": cat_id,
+            "category": cat.category,
+            "subcategory": cat.subcategory,
+            "destination": cat.destination,
+            "budgeted": b_by_month,
+            "actual": a_by_month,
+        }
+
+    # Bepaal teken per top-level categorie: som alle werkelijke bedragen
+    cat_sign: dict[str, Decimal] = {}  # top-level category name → total actual
+    for cat_id, row in row_map.items():
+        top = row["category"]
+        total = sum(
+            Decimal(v) for v in row["actual"].values() if v is not None
+        )
+        cat_sign[top] = cat_sign.get(top, Decimal("0")) + total
+
+    # Groepeer rijen in income / expenses
+    income_groups: dict[str, list] = {}
+    expense_groups: dict[str, list] = {}
+    for cat_id, row in sorted(row_map.items(), key=lambda x: (
+        x[1]["category"], x[1].get("subcategory") or "", x[1].get("destination") or ""
+    )):
+        top = row["category"]
+        sign = cat_sign.get(top, Decimal("0"))
+        if sign >= 0:
+            income_groups.setdefault(top, []).append(row)
+        else:
+            expense_groups.setdefault(top, []).append(row)
+
+    def _group_list(groups: dict) -> list:
+        return [
+            {"category": name, "rows": rows}
+            for name, rows in sorted(groups.items())
+        ]
+
+    return {
+        "months": month_list,
+        "income": _group_list(income_groups),
+        "expenses": _group_list(expense_groups),
+        "uncategorized": uncategorized,
+    }
+
+
+@app.put("/api/budget/{year_month}/{category_id}", status_code=200)
+def upsert_budget_entry(
+    year_month: str,
+    category_id: int,
+    body: BudgetEntryIn,
+    db: Session = Depends(get_db),
+):
+    """Sla een budgetbedrag op voor een maand + categorie (upsert)."""
+    from decimal import Decimal
+
+    existing = (
+        db.query(BudgetEntry)
+        .filter(BudgetEntry.year_month == year_month, BudgetEntry.category_id == category_id)
+        .first()
+    )
+    if existing:
+        existing.amount = Decimal(str(body.amount))
+    else:
+        cat = db.query(Category).filter(Category.id == category_id).first()
+        if not cat:
+            raise HTTPException(status_code=404, detail="Categorie niet gevonden")
+        db.add(BudgetEntry(year_month=year_month, category_id=category_id, amount=Decimal(str(body.amount))))
+    db.commit()
+    return {"year_month": year_month, "category_id": category_id, "amount": str(body.amount)}
+
+
+@app.delete("/api/budget/{year_month}/{category_id}", status_code=204)
+def delete_budget_entry(year_month: str, category_id: int, db: Session = Depends(get_db)):
+    """Verwijder een budgetbedrag."""
+    existing = (
+        db.query(BudgetEntry)
+        .filter(BudgetEntry.year_month == year_month, BudgetEntry.category_id == category_id)
+        .first()
+    )
+    if existing:
+        db.delete(existing)
+        db.commit()
 
 
 # ------------------------------------------------------------------

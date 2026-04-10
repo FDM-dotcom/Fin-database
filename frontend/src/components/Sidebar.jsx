@@ -3,6 +3,7 @@ import { NavLink } from 'react-router-dom'
 const NAV = [
   { to: '/', icon: 'dashboard', label: 'Dashboard', exact: true },
   { to: '/transacties', icon: 'table_rows', label: 'Transacties' },
+  { to: '/budget', icon: 'account_balance_wallet', label: 'Budget' },
   { to: '/import', icon: 'upload_file', label: 'Import' },
   { to: '/rules', icon: 'rule', label: 'Regels' },
 ]

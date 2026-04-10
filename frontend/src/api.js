@@ -122,4 +122,11 @@ export const api = {
     list:   ()     => req('GET',  '/api/iban-aliases'),
     create: (body) => req('POST', '/api/iban-aliases', body),
   },
+
+  budget: {
+    // months: array of "YYYY-MM" strings
+    report:      (months)                => req('GET', `/api/budget/report?months=${months.join(',')}`),
+    setEntry:    (yearMonth, catId, amt) => req('PUT', `/api/budget/${yearMonth}/${catId}`, { amount: amt }),
+    deleteEntry: (yearMonth, catId)      => req('DELETE', `/api/budget/${yearMonth}/${catId}`),
+  },
 }
