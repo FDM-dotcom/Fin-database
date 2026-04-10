@@ -57,8 +57,9 @@ class RabobankImporter(BaseImporter):
         try:
             amount = _parse_dutch_decimal(raw.get("Bedrag", ""))
             balance = _parse_dutch_decimal(raw.get("Saldo na trn", ""))
-            trx_date = _parse_date(raw.get("Datum", ""), "%Y-%m-%d")
-            interest_date = _parse_date(raw.get("Rentedatum", ""), "%Y-%m-%d")
+            # Rabobank gebruikt YYYY-MM-DD, maar probeer ook DD-MM-YYYY als fallback
+            trx_date = _parse_date(raw.get("Datum", ""), "%Y-%m-%d", "%d-%m-%Y")
+            interest_date = _parse_date(raw.get("Rentedatum", ""), "%Y-%m-%d", "%d-%m-%Y")
 
             # Omschrijving-1/2/3 samenvoegen en lege onderdelen verwijderen
             description_parts = [
@@ -107,12 +108,15 @@ def _parse_dutch_decimal(value: str) -> Optional[Decimal]:
         return None
 
 
-def _parse_date(value: str, fmt: str) -> Optional[date]:
+def _parse_date(value: str, *fmts: str) -> Optional[date]:
     from datetime import datetime
     value = value.strip()
     if not value:
         return None
-    try:
-        return datetime.strptime(value, fmt).date()
-    except ValueError:
-        return None
+    for fmt in fmts:
+        try:
+            return datetime.strptime(value, fmt).date()
+        except ValueError:
+            continue
+    logger.warning("Kan datum '%s' niet parsen met formaten %s", value, fmts)
+    return None

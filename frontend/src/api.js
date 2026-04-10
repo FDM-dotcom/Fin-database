@@ -60,6 +60,7 @@ export const api = {
   aliases: {
     list:        ()         => req('GET',    '/api/aliases'),
     suggestions: ()         => req('GET',    '/api/aliases/suggestions'),
+    nameLookup:  (ibans)    => req('POST',   '/api/aliases/name-lookup', { ibans }),
     create:      (body)     => req('POST',   '/api/aliases', body),
     update:      (iban, b)  => req('PUT',    `/api/aliases/${iban}`, b),
     delete:      (iban)     => req('DELETE', `/api/aliases/${iban}`),

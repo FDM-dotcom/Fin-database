@@ -13,14 +13,33 @@ body {
   line-height: 1;
 }
 
-/* Dark mode (default) */
-.dark body {
+/* ------------------------------------------------------------------
+ * CSS-variabelen voor wizard-componenten en gedeelde UI-elementen.
+ * Worden ingesteld via de class op <html> (zie App.jsx).
+ * ------------------------------------------------------------------ */
+html.dark {
+  --surface:       #251913;
+  --surface-2:     #2a1d17;
+  --border:        #40312b;
+  --text-primary:  #f6ddd4;
+  --text-muted:    rgba(246, 221, 212, 0.5);
+}
+
+html.light {
+  --surface:       #fff1ec;
+  --surface-2:     #ffe8e0;
+  --border:        rgba(37, 25, 19, 0.2);
+  --text-primary:  #251913;
+  --text-muted:    rgba(37, 25, 19, 0.6);
+}
+
+/* Dark mode body (default) */
+html.dark body {
   background-color: #1c110b;
   color: #f6ddd4;
 }
 
-/* Light mode */
-:root.light body,
+/* Light mode body */
 html.light body {
   background-color: #fff8f6;
   color: #251913;
@@ -31,3 +50,4 @@ html.light body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #40312b; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #594238; }
+

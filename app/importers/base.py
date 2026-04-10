@@ -82,6 +82,22 @@ class BaseImporter(ABC):
                     result.skipped += 1
                     continue
 
+                # Datum en bedrag zijn verplicht — sla rij over als ze ontbreken
+                if row.get("date") is None:
+                    result.errors.append(
+                        f"Datum ontbreekt of ongeldig (rij overgeslagen): "
+                        f"external_id={row.get('external_id', '?')}"
+                    )
+                    result.skipped += 1
+                    continue
+                if row.get("amount") is None:
+                    result.errors.append(
+                        f"Bedrag ontbreekt of ongeldig (rij overgeslagen): "
+                        f"external_id={row.get('external_id', '?')}"
+                    )
+                    result.skipped += 1
+                    continue
+
                 if self._already_exists(db, account.id, row["external_id"]):
                     result.skipped += 1
                     continue

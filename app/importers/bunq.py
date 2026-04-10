@@ -57,8 +57,9 @@ class BunqImporter(BaseImporter):
 
     def _map_row(self, raw: dict) -> Optional[dict]:
         try:
-            trx_date = _parse_date(raw.get("Date", ""), "%d-%m-%Y")
-            interest_date = _parse_date(raw.get("Interest Date", ""), "%d-%m-%Y")
+            # Bunq exporteert DD-MM-YYYY, maar sommige exports gebruiken YYYY-MM-DD
+            trx_date = _parse_date(raw.get("Date", ""), "%d-%m-%Y", "%Y-%m-%d")
+            interest_date = _parse_date(raw.get("Interest Date", ""), "%d-%m-%Y", "%Y-%m-%d")
             amount = _parse_amount(raw.get("Amount", ""))
             own_iban = raw.get("Account", "").strip()
             counterparty_iban = raw.get("Counterparty", "").strip() or None
@@ -91,14 +92,17 @@ class BunqImporter(BaseImporter):
 # Hulpfuncties
 # ------------------------------------------------------------------
 
-def _parse_date(value: str, fmt: str) -> Optional[date]:
+def _parse_date(value: str, *fmts: str) -> Optional[date]:
     value = value.strip()
     if not value:
         return None
-    try:
-        return datetime.strptime(value, fmt).date()
-    except ValueError:
-        return None
+    for fmt in fmts:
+        try:
+            return datetime.strptime(value, fmt).date()
+        except ValueError:
+            continue
+    logger.warning("Kan datum '%s' niet parsen met formaten %s", value, fmts)
+    return None
 
 
 def _parse_amount(value: str) -> Optional[Decimal]:

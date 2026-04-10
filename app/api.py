@@ -545,6 +545,45 @@ def alias_suggestions(limit: int = 15, db: Session = Depends(get_db)):
     return [{"iban": r.counterparty_iban, "transaction_count": r.n} for r in results]
 
 
+@app.post("/api/aliases/name-lookup")
+def alias_name_lookup(body: dict, db: Session = Depends(get_db)):
+    """
+    Zoek voor een lijst van IBANs de meest voorkomende tegenpartijnaam op
+    uit bestaande transacties. Handig als suggestie bij nieuwe IBAN-aliassen.
+    Body: {ibans: [str]}
+    Returns: {iban: naam | null}
+    """
+    from sqlalchemy import func
+
+    ibans = body.get("ibans", [])
+    if not ibans:
+        return {}
+
+    rows = (
+        db.query(
+            Transaction.counterparty_iban,
+            Transaction.counterparty_name,
+            func.count(Transaction.id).label("n"),
+        )
+        .filter(
+            Transaction.counterparty_iban.in_(ibans),
+            Transaction.counterparty_name.isnot(None),
+            Transaction.counterparty_name != "",
+        )
+        .group_by(Transaction.counterparty_iban, Transaction.counterparty_name)
+        .order_by(func.count(Transaction.id).desc())
+        .all()
+    )
+
+    # Neem per IBAN de meest voorkomende naam
+    name_map: dict[str, str] = {}
+    for iban, name, _ in rows:
+        if iban not in name_map:
+            name_map[iban] = name
+
+    return {iban: name_map.get(iban) for iban in ibans}
+
+
 @app.post("/api/aliases", status_code=201)
 def create_alias(body: AliasIn, db: Session = Depends(get_db)):
     existing = db.query(AccountAlias).filter(AccountAlias.iban == body.iban.strip()).first()
