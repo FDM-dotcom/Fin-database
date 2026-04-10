@@ -18,6 +18,7 @@ import csv
 import hashlib
 import html
 import logging
+import re
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -106,12 +107,36 @@ def _parse_date(value: str, *fmts: str) -> Optional[date]:
 
 
 def _parse_amount(value: str) -> Optional[Decimal]:
-    cleaned = value.strip().replace(",", ".")
-    if not cleaned:
+    """
+    Parseer een bedrag uit de bunq CSV.
+    Ondersteunt:
+    - Punt als decimaalteken: "23.45", "-23.45"  (bunq standaard)
+    - Komma als decimaalteken: "23,45"
+    - Valutatekens: "€23.45"
+    - Gecombineerd: "1.234,56" of "1,234.56"
+    Lege waarden geven None terug.
+    """
+    if not value:
         return None
+    # Strip witruimte en valutasymbolen; behoud cijfers, komma, punt, min en plus
+    s = re.sub(r'[^\d,.\-+]', '', value.strip())
+    if not s or s in ('-', '+', '.', ','):
+        return None
+    # Bepaal decimaalteken wanneer zowel komma als punt aanwezig
+    if ',' in s and '.' in s:
+        if s.rindex(',') > s.rindex('.'):
+            # Europees formaat: "1.234,56" → "1234.56"
+            s = s.replace('.', '').replace(',', '.')
+        else:
+            # Angelsaksisch: "1,234.56" → "1234.56"
+            s = s.replace(',', '')
+    elif ',' in s:
+        # Alleen komma → decimaalteken
+        s = s.replace(',', '.')
     try:
-        return Decimal(cleaned)
+        return Decimal(s)
     except InvalidOperation:
+        logger.warning("Kan bedrag niet parsen: '%s'", value)
         return None
 
 

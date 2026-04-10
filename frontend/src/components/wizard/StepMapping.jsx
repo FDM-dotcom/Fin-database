@@ -83,7 +83,7 @@ function MappingRow({ target, mapping, availableHeaders, onUpdate }) {
   )
 }
 
-export default function StepMapping({ parsedFiles, activeFileIdx, mappings, onMappingsChange, detectedIban }) {
+export default function StepMapping({ parsedFiles, activeFileIdx, mappings, onMappingsChange, onActiveFileChange, detectedIban }) {
   const [profiles, setProfiles] = useState([])
   const [saveModal, setSaveModal] = useState(false)
   const [profileName, setProfileName] = useState('')
@@ -174,20 +174,33 @@ export default function StepMapping({ parsedFiles, activeFileIdx, mappings, onMa
 
       {/* File tabs (multiple files) */}
       {parsedFiles.length > 1 && (
-        <div className="flex gap-1 flex-wrap">
-          {parsedFiles.map((pf, i) => (
-            <button
-              key={pf.id}
-              onClick={() => { /* handled by parent */ }}
-              className={`text-xs px-3 py-1 rounded-full border transition-colors ${
-                i === activeFileIdx
-                  ? 'bg-blue-600 text-white border-blue-600'
-                  : 'border-[var(--border)] hover:bg-[var(--surface-2)]'
-              }`}
-            >
-              {pf.fileName}
-            </button>
-          ))}
+        <div className="flex flex-col gap-2">
+          <div className="flex gap-1 flex-wrap">
+            {parsedFiles.map((pf, i) => (
+              <button
+                key={pf.id}
+                onClick={() => onActiveFileChange?.(i)}
+                className={`text-xs px-3 py-1 rounded-full border transition-colors ${
+                  i === activeFileIdx
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'border-[var(--border)] hover:bg-[var(--surface-2)]'
+                }`}
+              >
+                {pf.fileName}
+              </button>
+            ))}
+          </div>
+          {/* Toon info-banner als er meerdere bestanden van hetzelfde banktype zijn */}
+          {parsedFiles.filter((f) => f.bankType === activeFile.bankType).length > 1 && (
+            <div className="flex items-center gap-2 text-xs bg-blue-500/10 border border-blue-500/30 rounded-lg px-3 py-2">
+              <span className="material-symbols-outlined text-sm text-blue-400">info</span>
+              <span className="text-blue-400">
+                Mapping geldt automatisch voor alle{' '}
+                <strong>{parsedFiles.filter((f) => f.bankType === activeFile.bankType).length}</strong>{' '}
+                {activeFile.bankType}-bestanden.
+              </span>
+            </div>
+          )}
         </div>
       )}
 

@@ -27,7 +27,19 @@ export default function ImportWizard({ dark }) {
   }, [parsedFiles, mappings])
 
   function updateMappings(fileId, newMappings) {
-    setMappings((prev) => ({ ...prev, [fileId]: newMappings }))
+    const srcFile = parsedFiles.find((f) => f.id === fileId)
+    setMappings((prev) => {
+      const updated = { ...prev, [fileId]: newMappings }
+      // Propageer automatisch naar alle bestanden van hetzelfde banktype
+      if (srcFile) {
+        for (const pf of parsedFiles) {
+          if (pf.id !== fileId && pf.bankType === srcFile.bankType) {
+            updated[pf.id] = newMappings
+          }
+        }
+      }
+      return updated
+    })
   }
 
   function updateDuplicateState(updater) {
@@ -74,6 +86,7 @@ export default function ImportWizard({ dark }) {
                 activeFileIdx={activeFileIdx}
                 mappings={mappings}
                 onMappingsChange={updateMappings}
+                onActiveFileChange={setActiveFileIdx}
                 detectedIban={detectedIban}
               />
             )}

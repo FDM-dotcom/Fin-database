@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import csv
 import logging
+import re
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -98,13 +99,25 @@ class RabobankImporter(BaseImporter):
 # ------------------------------------------------------------------
 
 def _parse_dutch_decimal(value: str) -> Optional[Decimal]:
-    """Zet Nederlandse decimaalnotatie (komma) om naar Decimal."""
-    cleaned = value.strip().replace(".", "").replace(",", ".")
-    if not cleaned:
+    """
+    Zet Nederlandse decimaalnotatie (komma) om naar Decimal.
+    Ondersteunt valutatekens (€) en duizendtallen-separatoren (.).
+    Voorbeelden: "1.234,56" → 1234.56 | "€-5,45" → -5.45
+    """
+    if not value:
+        return None
+    # Strip valutasymbolen en witruimte
+    s = re.sub(r'[€$£\s]', '', value.strip())
+    if not s:
+        return None
+    # Rabobank: punt = duizendtallen-separator, komma = decimaalteken
+    cleaned = s.replace(".", "").replace(",", ".")
+    if not cleaned or cleaned in ('-', '+', '.'):
         return None
     try:
         return Decimal(cleaned)
     except InvalidOperation:
+        logger.warning("Kan bedrag niet parsen: '%s'", value)
         return None
 
 

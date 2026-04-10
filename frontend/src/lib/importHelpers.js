@@ -11,7 +11,8 @@ import { sha256 } from '@/lib/utils'
 
 const BANK_SIGNATURES = {
   rabobank: ['IBAN/BBAN', 'Volgnr', 'Datum', 'Rentedatum', 'Bedrag', 'Saldo na trn', 'Tegenrekening IBAN/BBAN'],
-  bunq: ['Date', 'Interest Date', 'Amount', 'Account', 'Counterpart', 'Name', 'Description'],
+  // bunq-kolom heet 'Counterparty' (niet 'Counterpart')
+  bunq: ['Date', 'Interest Date', 'Amount', 'Account', 'Counterparty', 'Name', 'Description'],
   ing: ['Datum', 'Naam / Omschrijving', 'Rekening', 'Tegenrekening', 'Code', 'Af Bij', 'Bedrag (EUR)', 'MutatieSoort', 'Mededelingen'],
   abn_amro: ['Datum', 'Naam / Omschrijving', 'Rekening', 'Tegenrekening', 'Code', 'Af Bij', 'Bedrag (EUR)'],
 }
@@ -50,7 +51,7 @@ const BANK_DEFAULTS = {
     'Bedrag':             ['Amount'],
     'Van IBAN':           ['Account'],
     'Naam van rekening':  [],
-    'Naar IBAN':          ['Counterpart'],
+    'Naar IBAN':          ['Counterparty'],   // 'Counterparty' met 'y'
     'Naam naar rekening': ['Name'],
     'Transactiedetails':  ['Description'],
   },
@@ -95,9 +96,7 @@ export function readFileWithEncoding(file, encoding = 'utf-8') {
     reader.onload = (e) => resolve(e.target.result)
     reader.onerror = reject
     if (encoding === 'windows-1252' || encoding === 'cp1252') {
-      const blob = new Blob([file])
-      const decoder = new TextDecoder('windows-1252')
-      file.arrayBuffer().then((buf) => resolve(decoder.decode(buf))).catch(reject)
+      file.arrayBuffer().then((buf) => resolve(new TextDecoder('windows-1252').decode(buf))).catch(reject)
     } else {
       reader.readAsText(file, encoding)
     }
@@ -112,10 +111,10 @@ export function normalizeDate(raw, bankType) {
   if (!raw) return ''
   const s = raw.trim()
 
-  // Rabobank: YYYY-MM-DD (al correct)
+  // YYYY-MM-DD (al correct)
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
 
-  // ING / bunq: DD-MM-YYYY
+  // DD-MM-YYYY (bunq, ING)
   const dmy = s.match(/^(\d{2})-(\d{2})-(\d{4})$/)
   if (dmy) return `${dmy[3]}-${dmy[2]}-${dmy[1]}`
 
@@ -123,7 +122,7 @@ export function normalizeDate(raw, bankType) {
   const dmy2 = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
   if (dmy2) return `${dmy2[3]}-${dmy2[2]}-${dmy2[1]}`
 
-  // YYYYMMDD
+  // YYYYMMDD (ING)
   const ymd = s.match(/^(\d{4})(\d{2})(\d{2})$/)
   if (ymd) return `${ymd[1]}-${ymd[2]}-${ymd[3]}`
 
@@ -189,21 +188,35 @@ export function applyMappingToRows(rows, mappings, bankType) {
 }
 
 // ------------------------------------------------------------------
-// External ID berekening (re-exporteert sha256 vanuit utils)
+// External ID — moet EXACT overeenkomen met de Python-backend berekening
 // ------------------------------------------------------------------
 
 export { sha256 }
 
 export async function computeExternalId(row, bankType) {
+  // Rabobank: Volgnr is de unieke identifier (zoals Python importer)
   if (bankType === 'rabobank') {
-    return row['Volgnr'] || null
+    return (row['Volgnr'] || '').trim() || null
   }
-  // Bunq en overigen: SHA256 van datum|bedrag|tegenpartij|omschrijving
+
+  // Bunq: SHA256("date|amount|own_iban|counterparty_iban|description")
+  // Moet exact matchen met _make_external_id() in app/importers/bunq.py
+  if (bankType === 'bunq') {
+    const dateStr = normalizeDate((row['Date'] || '').trim(), 'bunq')
+    const amountStr = (row['Amount'] || '').trim()          // Rauwe waarde, zoals Python str(Decimal)
+    const ownIban = (row['Account'] || '').trim()           // row['Account']
+    const counterpartyIban = (row['Counterparty'] || '').trim()  // 'Counterparty' met 'y'!
+    const description = (row['Description'] || '').trim()
+    return sha256([dateStr, amountStr, ownIban, counterpartyIban, description].join('|'))
+  }
+
+  // Overige banken (ING, ABN AMRO): generieke hash op gemapte velden
+  const dateStr = normalizeDate(row['Date'] || row['Datum'] || '', bankType)
   const parts = [
-    row['Date'] || row['Datum'] || '',
-    row['Amount'] || row['Bedrag'] || '',
-    row['Counterpart'] || row['Tegenrekening'] || '',
-    row['Description'] || row['Omschrijving'] || '',
+    dateStr,
+    (row['Amount'] || row['Bedrag'] || '').trim(),
+    (row['Counterparty'] || row['Tegenrekening'] || '').trim(),
+    (row['Description'] || row['Omschrijving'] || row['Mededelingen'] || '').trim(),
   ]
   return sha256(parts.join('|'))
 }
