@@ -788,35 +788,106 @@ async def preview_import(
 @app.post("/api/transactions/check-duplicates")
 def check_duplicates(body: dict, db: Session = Depends(get_db)):
     """
-    Controleer welke external_id's al bestaan voor een account.
-    Body: {account_iban: str, external_ids: [str]}
-    Returns: {existing: [str], new: [str]}
-    """
-    account_iban = body.get("account_iban", "")
-    external_ids = body.get("external_ids", [])
+    Content-gebaseerde duplicatencheck — betrouwbaarder dan SHA256-hashes.
 
-    if not external_ids:
-        return {"existing": [], "new": []}
-
-    account = db.query(Account).filter(Account.iban == account_iban).first()
-    if not account:
-        return {"existing": [], "new": external_ids}
-
-    existing_ids = set(
-        row[0]
-        for row in db.query(Transaction.external_id)
-        .filter(
-            Transaction.account_id == account.id,
-            Transaction.external_id.in_(external_ids),
-        )
-        .all()
-        if row[0]
-    )
-
-    return {
-        "existing": [eid for eid in external_ids if eid in existing_ids],
-        "new": [eid for eid in external_ids if eid not in existing_ids],
+    Body: {
+        transactions: [{idx, date, amount, counterparty_iban?, description?}],
+        account_iban?: str   (optioneel — beperkt zoekopdracht tot één rekening)
     }
+
+    Markeert een inkomende transactie als duplicaat als:
+      date == date  AND  amount == amount
+      AND  (counterparty_iban matcht  OR  description[:50] matcht)
+
+    Returns: {duplicates: [{idx, match: {id, date, amount, ...}}]}
+    """
+    from decimal import Decimal, InvalidOperation
+    from datetime import date as date_type
+    from sqlalchemy import or_
+
+    transactions = body.get("transactions", [])
+    if not transactions:
+        return {"duplicates": []}
+
+    # Parseer elk inkomend record; sla records met ongeldige datum/bedrag over
+    parsed = []
+    for t in transactions:
+        raw_date = (t.get("date") or "").strip()
+        raw_amount = (t.get("amount") or "").strip().replace(",", ".")
+        try:
+            trx_date = date_type.fromisoformat(raw_date)
+        except ValueError:
+            continue
+        try:
+            trx_amount = Decimal(raw_amount)
+        except InvalidOperation:
+            continue
+        parsed.append({
+            "idx": t.get("idx"),
+            "date": trx_date,
+            "amount": trx_amount,
+            "counterparty_iban": (t.get("counterparty_iban") or "").strip().upper() or None,
+            "description": (t.get("description") or "").strip() or None,
+        })
+
+    if not parsed:
+        return {"duplicates": []}
+
+    # Optioneel filteren op rekening
+    account_iban = (body.get("account_iban") or "").strip()
+    account = None
+    if account_iban:
+        account = db.query(Account).filter(Account.iban == account_iban).first()
+
+    # Één efficiënte query op alle unieke datums (vermijdt N+1)
+    all_dates = list({p["date"] for p in parsed})
+    q = (
+        db.query(Transaction)
+        .options(joinedload(Transaction.account))
+        .filter(Transaction.date.in_(all_dates))
+    )
+    if account:
+        q = q.filter(Transaction.account_id == account.id)
+    candidates = q.all()
+
+    # Bouw opzoektabel: datum → [Transaction]
+    lookup: dict = {}
+    for c in candidates:
+        lookup.setdefault(c.date, []).append(c)
+
+    duplicates = []
+    for p in parsed:
+        for candidate in lookup.get(p["date"], []):
+            # Bedrag moet exact overeenkomen
+            if candidate.amount != p["amount"]:
+                continue
+
+            is_dup = False
+            # Tegenrekening-IBAN-match (beide aanwezig)
+            if p["counterparty_iban"] and candidate.counterparty_iban:
+                if p["counterparty_iban"] == (candidate.counterparty_iban or "").upper():
+                    is_dup = True
+            # Omschrijving-match op eerste 50 tekens (beide aanwezig)
+            if not is_dup and p["description"] and candidate.description:
+                if p["description"][:50].lower() == (candidate.description or "")[:50].lower():
+                    is_dup = True
+
+            if is_dup:
+                duplicates.append({
+                    "idx": p["idx"],
+                    "match": {
+                        "id": candidate.id,
+                        "date": candidate.date.isoformat(),
+                        "amount": str(candidate.amount),
+                        "counterparty_name": candidate.counterparty_name,
+                        "counterparty_iban": candidate.counterparty_iban,
+                        "description": candidate.description,
+                        "account_name": candidate.account.name if candidate.account else None,
+                    },
+                })
+                break  # Eerste match volstaat
+
+    return {"duplicates": duplicates}
 
 
 @app.get("/api/transactions")

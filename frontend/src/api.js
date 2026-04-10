@@ -96,10 +96,12 @@ export const api = {
       })
       return req('GET', `/api/transactions?${qs}`)
     },
-    checkDuplicates: (accountIban, externalIds) =>
+    // transactions: [{idx, date, amount, counterparty_iban?, description?}]
+    // accountIban: optioneel — beperkt zoekscope tot één rekening
+    checkDuplicates: (transactions, accountIban = null) =>
       req('POST', '/api/transactions/check-duplicates', {
-        account_iban: accountIban,
-        external_ids: externalIds,
+        transactions,
+        account_iban: accountIban || undefined,
       }),
     delete: (ids) => req('DELETE', '/api/transactions', { ids }),
     patch:  (id, body) => req('PATCH', `/api/transactions/${id}`, body),

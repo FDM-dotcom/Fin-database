@@ -12,13 +12,21 @@ export default function StepConfirm({ parsedFiles, mappings, duplicateState, det
   const [results, setResults] = useState(null)
   const [error, setError] = useState(null)
 
-  const { excludedIds = new Set(), rows = [] } = duplicateState || {}
-  const toImport = rows.filter((r) => !excludedIds.has(r._extId))
+  // duplicateState gebruikt nu excludedIndices (op basis van array-index, niet _extId)
+  const { excludedIndices = new Set(), rows = [] } = duplicateState || {}
+  const toImport = rows.filter((_, i) => !excludedIndices.has(i))
 
-  const byFile = parsedFiles.map((pf) => {
-    const fileRows = toImport.filter((r) => r._fileName === pf.fileName)
-    return { pf, count: fileRows.length }
-  })
+  // Haal actieve rijen per bestand op; val terug op herberekening als stap 3 is overgeslagen
+  function getFileActiveRows(pf) {
+    if (rows.length > 0) {
+      return toImport.filter((r) => r._fileName === pf.fileName)
+    }
+    // Fallback: stap 3 overgeslagen — alle rijen importeren
+    const fileMappings = mappings[pf.id] || getDefaultMappings(pf.bankType)
+    return applyMappingToRows(pf.rows, fileMappings, pf.bankType)
+  }
+
+  const byFile = parsedFiles.map((pf) => ({ pf, count: getFileActiveRows(pf).length }))
 
   // Bepaal het eigen IBAN per bestand: detectedIban (uit mappings) of eerste rij Van IBAN
   function getOwnIban(pf) {
@@ -39,9 +47,7 @@ export default function StepConfirm({ parsedFiles, mappings, duplicateState, det
     try {
       for (const pf of parsedFiles) {
         const ownIban = getOwnIban(pf)
-        const fileMappings = mappings[pf.id] || getDefaultMappings(pf.bankType)
-        const mapped = applyMappingToRows(pf.rows, fileMappings, pf.bankType)
-        const activeRows = mapped.filter((r) => !excludedIds.has(r._extId))
+        const activeRows = getFileActiveRows(pf)
 
         if (activeRows.length === 0) continue
 
@@ -83,8 +89,8 @@ export default function StepConfirm({ parsedFiles, mappings, duplicateState, det
     }
   }
 
-  const totalToImport = toImport.length
-  const totalExcluded = (duplicateState?.rows?.length || 0) - totalToImport
+  const totalToImport = byFile.reduce((sum, { count }) => sum + count, 0)
+  const totalExcluded = (rows.length || 0) - toImport.length
 
   return (
     <div className="flex flex-col gap-5">
