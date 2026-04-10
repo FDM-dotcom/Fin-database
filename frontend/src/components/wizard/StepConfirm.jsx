@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { api } from '@/api'
-import { applyMappingToRows, computeExternalId, getDefaultMappings } from '@/lib/importHelpers'
+import { applyMappingToRows, getDefaultMappings } from '@/lib/importHelpers'
 
-const KNOWN_BANKS = ['rabobank', 'bunq']
+// Rabobank en bunq worden door de Python-backend zelf verwerkt (eigen importer).
+// ING, ABN AMRO en overigen gaan als voorgemapte JSON via /api/import/mapped.
+const NATIVE_BANKS = ['rabobank', 'bunq']
 
-export default function StepConfirm({ parsedFiles, mappings, duplicateState, accountIban, onDone }) {
+export default function StepConfirm({ parsedFiles, mappings, duplicateState, detectedIban, onDone }) {
   const [runCategorize, setRunCategorize] = useState(false)
   const [importing, setImporting] = useState(false)
   const [results, setResults] = useState(null)
@@ -13,17 +15,21 @@ export default function StepConfirm({ parsedFiles, mappings, duplicateState, acc
   const { excludedIds = new Set(), rows = [] } = duplicateState || {}
   const toImport = rows.filter((r) => !excludedIds.has(r._extId))
 
-  // Group by file
   const byFile = parsedFiles.map((pf) => {
     const fileRows = toImport.filter((r) => r._fileName === pf.fileName)
     return { pf, count: fileRows.length }
   })
 
+  // Bepaal het eigen IBAN per bestand: detectedIban (uit mappings) of eerste rij Van IBAN
+  function getOwnIban(pf) {
+    if (detectedIban) return detectedIban
+    const fileMappings = mappings[pf.id] || getDefaultMappings(pf.bankType)
+    const vanIbanMapping = fileMappings.find((m) => m.targetColumn === 'Van IBAN')
+    if (!vanIbanMapping?.sourceColumns.length) return ''
+    return (pf.rows[0]?.[vanIbanMapping.sourceColumns[0]] || '').trim().toUpperCase()
+  }
+
   async function runImport() {
-    if (!accountIban) {
-      setError('Selecteer eerst een rekening-IBAN.')
-      return
-    }
     setImporting(true)
     setError(null)
     setResults(null)
@@ -32,33 +38,35 @@ export default function StepConfirm({ parsedFiles, mappings, duplicateState, acc
 
     try {
       for (const pf of parsedFiles) {
+        const ownIban = getOwnIban(pf)
         const fileMappings = mappings[pf.id] || getDefaultMappings(pf.bankType)
         const mapped = applyMappingToRows(pf.rows, fileMappings, pf.bankType)
         const activeRows = mapped.filter((r) => !excludedIds.has(r._extId))
 
         if (activeRows.length === 0) continue
 
-        if (KNOWN_BANKS.includes(pf.bankType)) {
-          // Known banks: send raw CSV file to the Python importer
-          const result = await api.import(pf.file, accountIban, runCategorize)
+        if (NATIVE_BANKS.includes(pf.bankType)) {
+          // Rabobank/bunq: stuur het ruwe CSV-bestand naar de Python-importer.
+          // Geef het gedetecteerde IBAN mee — de backend slaat import over als
+          // het account niet bestaat en maakt het anders automatisch aan.
+          const result = await api.import(pf.file, ownIban || undefined, runCategorize)
           allResults.push({ file: pf.fileName, ...result })
         } else {
-          // Unknown banks (ING, ABN AMRO): send pre-mapped JSON transactions
-          const transactions = await Promise.all(
-            activeRows.map(async (row) => ({
-              date: row['Datum'] || '',
-              amount: row['Bedrag'] || '0',
-              counterparty_iban: row['Naar IBAN'] || null,
-              counterparty_name: row['Naam naar rekening'] || null,
-              description: row['Transactiedetails'] || null,
-              external_id: row._extId || null,
-              bank_type: pf.bankType,
-              raw: row._raw || {},
-            }))
-          )
+          // ING, ABN AMRO, onbekend: stuur voorgemapte JSON-transacties.
+          const transactions = activeRows.map((row) => ({
+            date: row['Datum'] || '',
+            amount: row['Bedrag'] || '0',
+            own_iban: ownIban || null,
+            counterparty_iban: row['Naar IBAN'] || null,
+            counterparty_name: row['Naam naar rekening'] || null,
+            description: row['Transactiedetails'] || null,
+            external_id: row._extId || null,
+            bank_type: pf.bankType,
+            raw: row._raw || {},
+          }))
 
           const result = await api.importMapped({
-            account_iban: accountIban,
+            account_iban: ownIban || null,
             run_categorize: runCategorize,
             transactions,
           })
@@ -90,8 +98,10 @@ export default function StepConfirm({ parsedFiles, mappings, duplicateState, acc
       {/* Summary */}
       <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)] divide-y divide-[var(--border)]">
         <div className="px-4 py-3 flex justify-between text-sm">
-          <span className="text-[var(--text-muted)]">Rekening</span>
-          <span className="font-mono text-xs">{accountIban || '—'}</span>
+          <span className="text-[var(--text-muted)]">Eigen rekening (IBAN)</span>
+          <span className="font-mono text-xs">
+            {detectedIban || <span className="italic text-orange-400">nog niet gedetecteerd</span>}
+          </span>
         </div>
         <div className="px-4 py-3 flex justify-between text-sm">
           <span className="text-[var(--text-muted)]">Bestanden</span>
@@ -115,7 +125,14 @@ export default function StepConfirm({ parsedFiles, mappings, duplicateState, acc
         )}
       </div>
 
-      {/* Options */}
+      {!detectedIban && (
+        <div className="flex items-start gap-2 text-sm text-orange-400 bg-orange-400/10 rounded-lg px-4 py-3">
+          <span className="material-symbols-outlined text-base shrink-0">warning</span>
+          Geen eigen IBAN gedetecteerd. Ga terug naar stap 2 en koppel de kolom <strong>Van IBAN</strong>.
+          De backend kan het account dan automatisch aanmaken.
+        </div>
+      )}
+
       <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
         <input
           type="checkbox"
@@ -126,11 +143,10 @@ export default function StepConfirm({ parsedFiles, mappings, duplicateState, acc
         Categorisatieregels direct toepassen na import
       </label>
 
-      {/* Import button */}
       {!results && (
         <button
           onClick={runImport}
-          disabled={importing || totalToImport === 0 || !accountIban}
+          disabled={importing || totalToImport === 0}
           className="self-start px-6 py-2.5 rounded-xl bg-blue-600 text-white font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center gap-2"
         >
           {importing ? (
@@ -154,7 +170,6 @@ export default function StepConfirm({ parsedFiles, mappings, duplicateState, acc
         </div>
       )}
 
-      {/* Results */}
       {results && (
         <div className="flex flex-col gap-3">
           <div className="flex items-center gap-2 text-green-400 font-medium">

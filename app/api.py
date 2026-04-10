@@ -143,6 +143,7 @@ class MappingProfileIn(BaseModel):
 class MappedTransactionIn(BaseModel):
     date: str
     amount: str
+    own_iban: Optional[str] = None          # Eigen rekening-IBAN (Van IBAN)
     counterparty_iban: Optional[str] = None
     counterparty_name: Optional[str] = None
     description: Optional[str] = None
@@ -152,7 +153,7 @@ class MappedTransactionIn(BaseModel):
 
 
 class MappedImportIn(BaseModel):
-    account_iban: str
+    account_iban: Optional[str] = None      # Optioneel: wordt ook uit transacties gehaald
     run_categorize: bool = False
     transactions: list[MappedTransactionIn]
 
@@ -919,10 +920,18 @@ def import_mapped(body: MappedImportIn, db: Session = Depends(get_db)):
     from datetime import date as date_type
     import hashlib
 
-    # Zoek rekening op IBAN
-    account = db.query(Account).filter(Account.iban == body.account_iban.strip()).first()
-    if not account:
-        raise HTTPException(status_code=404, detail=f"Rekening niet gevonden voor IBAN {body.account_iban}")
+    # Bepaal eigen IBAN: uit body of uit eerste transactie
+    own_iban = (body.account_iban or "").strip()
+    if not own_iban and body.transactions:
+        own_iban = (body.transactions[0].own_iban or "").strip()
+
+    if not own_iban:
+        raise HTTPException(status_code=400, detail="Geen rekening-IBAN opgegeven of gedetecteerd in transactiedata.")
+
+    # Zoek rekening op IBAN — maak automatisch aan als nieuw
+    from app.importers.base import BaseImporter
+    first_bank_type = body.transactions[0].bank_type if body.transactions else "unknown"
+    account = BaseImporter._resolve_or_create_account(db, own_iban, first_bank_type)
 
     # Laad aliassen voor verrijking tegenpartijnaam
     aliases = {a.iban: a.display_name for a in db.query(AccountAlias).all()}
@@ -949,6 +958,14 @@ def import_mapped(body: MappedImportIn, db: Session = Depends(get_db)):
                 skipped += 1
                 continue
 
+            # Eigen IBAN per transactie kan afwijken van body.account_iban
+            # (bij meerdere bestanden met andere rekeningen in dezelfde call)
+            trx_own_iban = (trx_in.own_iban or own_iban or "").strip()
+            if trx_own_iban and trx_own_iban != own_iban:
+                trx_account = BaseImporter._resolve_or_create_account(db, trx_own_iban, trx_in.bank_type)
+            else:
+                trx_account = account
+
             # External ID
             ext_id = trx_in.external_id
             if not ext_id:
@@ -957,7 +974,7 @@ def import_mapped(body: MappedImportIn, db: Session = Depends(get_db)):
 
             # Duplicate check
             exists = db.query(Transaction).filter(
-                Transaction.account_id == account.id,
+                Transaction.account_id == trx_account.id,
                 Transaction.external_id == ext_id,
             ).first()
             if exists:
@@ -978,7 +995,7 @@ def import_mapped(body: MappedImportIn, db: Session = Depends(get_db)):
             import_source = source_map.get(trx_in.bank_type, ImportSourceType.manual)
 
             trx = Transaction(
-                account_id=account.id,
+                account_id=trx_account.id,
                 date=trx_date,
                 amount=amount,
                 counterparty_iban=cp_iban,

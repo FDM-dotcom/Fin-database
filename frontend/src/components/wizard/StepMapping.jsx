@@ -83,7 +83,7 @@ function MappingRow({ target, mapping, availableHeaders, onUpdate }) {
   )
 }
 
-export default function StepMapping({ parsedFiles, activeFileIdx, mappings, onMappingsChange }) {
+export default function StepMapping({ parsedFiles, activeFileIdx, mappings, onMappingsChange, detectedIban }) {
   const [profiles, setProfiles] = useState([])
   const [saveModal, setSaveModal] = useState(false)
   const [profileName, setProfileName] = useState('')
@@ -155,6 +155,22 @@ export default function StepMapping({ parsedFiles, activeFileIdx, mappings, onMa
           Je kunt meerdere kolommen samenvoegen met een scheidingsteken.
         </p>
       </div>
+
+      {/* Gedetecteerd eigen IBAN */}
+      {detectedIban ? (
+        <div className="flex items-center gap-2 text-sm bg-green-500/10 border border-green-500/30 rounded-lg px-3 py-2">
+          <span className="material-symbols-outlined text-base text-green-400">account_balance</span>
+          <span className="text-green-400 font-medium">Eigen rekening:</span>
+          <span className="font-mono text-xs">{detectedIban}</span>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 text-sm bg-orange-500/10 border border-orange-500/30 rounded-lg px-3 py-2">
+          <span className="material-symbols-outlined text-base text-orange-400">warning</span>
+          <span className="text-orange-400">
+            Koppel <strong>Van IBAN</strong> aan een bronkolom om de eigen rekening automatisch te detecteren.
+          </span>
+        </div>
+      )}
 
       {/* File tabs (multiple files) */}
       {parsedFiles.length > 1 && (

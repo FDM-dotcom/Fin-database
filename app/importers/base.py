@@ -11,7 +11,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.models import Account, AccountAlias, Transaction
+from app.models import Account, AccountAlias, AccountType, InstitutionType, Transaction
 
 logger = logging.getLogger(__name__)
 
@@ -74,9 +74,9 @@ class BaseImporter(ABC):
         for row in rows:
             try:
                 iban = account_iban or row.get("own_iban")
-                account = self._resolve_account(db, iban)
+                account = self._resolve_or_create_account(db, iban, self.source_name)
                 if account is None:
-                    msg = f"Rekening met IBAN '{iban}' niet gevonden in de database."
+                    msg = f"Geen rekening-IBAN gevonden in rij — sla import over."
                     if msg not in result.errors:
                         result.errors.append(msg)
                     result.skipped += 1
@@ -132,6 +132,38 @@ class BaseImporter(ABC):
         if not iban:
             return None
         return db.query(Account).filter(Account.iban == iban.strip()).first()
+
+    @staticmethod
+    def _resolve_or_create_account(
+        db: Session, iban: Optional[str], source_name: str = ""
+    ) -> Optional[Account]:
+        """Zoek rekening op IBAN op, of maak een nieuwe aan als het IBAN onbekend is."""
+        if not iban:
+            return None
+        iban = iban.strip()
+        account = db.query(Account).filter(Account.iban == iban).first()
+        if account:
+            return account
+
+        # Automatisch aanmaken — banktype bepaalt instelling
+        _INSTITUTION_MAP = {
+            "rabobank": InstitutionType.rabobank,
+            "bunq":     InstitutionType.bunq,
+            "ing":      InstitutionType.ing,
+            "abn_amro": InstitutionType.abn_amro,
+        }
+        institution = _INSTITUTION_MAP.get(source_name.lower(), InstitutionType.ing)
+
+        account = Account(
+            name=iban,   # Gebruiker kan naam later aanpassen
+            iban=iban,
+            type=AccountType.betaalrekening,
+            institution=institution,
+        )
+        db.add(account)
+        db.flush()
+        logger.info("Nieuw account automatisch aangemaakt voor IBAN %s (%s)", iban, institution.value)
+        return account
 
     @staticmethod
     def _already_exists(db: Session, account_id: int, external_id: str) -> bool:

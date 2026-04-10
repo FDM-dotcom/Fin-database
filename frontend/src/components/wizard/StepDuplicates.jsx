@@ -14,7 +14,7 @@ function SimilarityBar({ pct }) {
   )
 }
 
-export default function StepDuplicates({ parsedFiles, mappings, accountIban, duplicateState, onDuplicateStateChange }) {
+export default function StepDuplicates({ parsedFiles, mappings, detectedIban, duplicateState, onDuplicateStateChange }) {
   const [loading, setLoading] = useState(false)
   const [checked, setChecked] = useState(false)
 
@@ -22,7 +22,7 @@ export default function StepDuplicates({ parsedFiles, mappings, accountIban, dup
   const { existingIds = new Set(), excludedIds = new Set(), rows = [], totalNew = 0, totalDup = 0 } = duplicateState || {}
 
   useEffect(() => {
-    if (!accountIban || parsedFiles.length === 0) return
+    if (parsedFiles.length === 0) return
     runCheck()
   }, [])
 
@@ -41,8 +41,9 @@ export default function StepDuplicates({ parsedFiles, mappings, accountIban, dup
       }
 
       const extIds = allRows.map((r) => r._extId).filter(Boolean)
-      const result = accountIban
-        ? await api.transactions.checkDuplicates(accountIban, extIds)
+      // detectedIban kan leeg zijn als het account nog niet bestaat — dan zijn alle rijen nieuw
+      const result = detectedIban
+        ? await api.transactions.checkDuplicates(detectedIban, extIds)
         : { existing: [], new: extIds }
 
       const existSet = new Set(result.existing)

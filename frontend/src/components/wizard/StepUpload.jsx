@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import Papa from 'papaparse'
 import { detectBankType, readFileWithEncoding } from '@/lib/importHelpers'
+import { generateId } from '@/lib/utils'
 
 const BANK_LABELS = {
   rabobank: { label: 'Rabobank', color: 'bg-orange-500' },
@@ -41,7 +42,7 @@ async function parseFile(file) {
         const headers = result.meta.fields || []
         const bankType = detectBankType(headers)
         resolve({
-          id: crypto.randomUUID(),
+          id: generateId(),
           file,
           fileName: file.name,
           bankType,

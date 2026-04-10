@@ -3,6 +3,8 @@
  * Banknaam-detectie, encodering, kolomnormalisatie en SHA256 berekening.
  */
 
+import { sha256 } from '@/lib/utils'
+
 // ------------------------------------------------------------------
 // Bank-type detectie op basis van CSV-headers
 // ------------------------------------------------------------------
@@ -187,15 +189,10 @@ export function applyMappingToRows(rows, mappings, bankType) {
 }
 
 // ------------------------------------------------------------------
-// SHA256 via Web Crypto API (voor external_id van bunq / onbekende banken)
+// External ID berekening (re-exporteert sha256 vanuit utils)
 // ------------------------------------------------------------------
 
-export async function sha256(str) {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str))
-  return Array.from(new Uint8Array(buf))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
-}
+export { sha256 }
 
 export async function computeExternalId(row, bankType) {
   if (bankType === 'rabobank') {

@@ -1,25 +1,30 @@
-import { useState } from 'react'
-import { api } from '@/api'
+import { useMemo, useState } from 'react'
 import WizardNav from '@/components/wizard/WizardNav'
 import StepUpload from '@/components/wizard/StepUpload'
 import StepMapping from '@/components/wizard/StepMapping'
 import StepDuplicates from '@/components/wizard/StepDuplicates'
 import StepIban from '@/components/wizard/StepIban'
 import StepConfirm from '@/components/wizard/StepConfirm'
+import { getDefaultMappings } from '@/lib/importHelpers'
 
 export default function ImportWizard({ dark }) {
   const [step, setStep] = useState(1)
-  const [parsedFiles, setParsedFiles] = useState([])       // [{id, file, fileName, bankType, headers, rows, rowCount}]
+  const [parsedFiles, setParsedFiles] = useState([])   // [{id, file, fileName, bankType, headers, rows, rowCount}]
   const [activeFileIdx, setActiveFileIdx] = useState(0)
-  const [mappings, setMappings] = useState({})              // {fileId: [ColumnMapping]}
+  const [mappings, setMappings] = useState({})          // {fileId: [ColumnMapping]}
   const [duplicateState, setDuplicateState] = useState(null)
-  const [accountIban, setAccountIban] = useState('')
-  const [accounts, setAccounts] = useState(null)
 
-  // Load accounts on first render
-  useState(() => {
-    api.accounts.list().then(setAccounts).catch(console.error)
-  })
+  // Auto-detecteer het eigen IBAN uit de eerste rij van het eerste bestand,
+  // via de 'Van IBAN'-kolomkoppeling — geen handmatige rekening-selectie nodig.
+  const detectedIban = useMemo(() => {
+    if (!parsedFiles.length) return ''
+    const pf = parsedFiles[0]
+    const fileMappings = mappings[pf.id] || getDefaultMappings(pf.bankType)
+    const vanIbanMapping = fileMappings.find((m) => m.targetColumn === 'Van IBAN')
+    if (!vanIbanMapping?.sourceColumns.length) return ''
+    const sourceCol = vanIbanMapping.sourceColumns[0]
+    return (pf.rows[0]?.[sourceCol] || '').trim().toUpperCase()
+  }, [parsedFiles, mappings])
 
   function updateMappings(fileId, newMappings) {
     setMappings((prev) => ({ ...prev, [fileId]: newMappings }))
@@ -31,7 +36,6 @@ export default function ImportWizard({ dark }) {
     )
   }
 
-  // Navigation guards: what steps can be accessed?
   function canGoTo(n) {
     if (n === 1) return true
     if (n === 2) return parsedFiles.length > 0
@@ -41,17 +45,8 @@ export default function ImportWizard({ dark }) {
     return false
   }
 
-  function next() {
-    if (step < 5) setStep((s) => s + 1)
-  }
-
-  function prev() {
-    if (step > 1) setStep((s) => s - 1)
-  }
-
   return (
     <div className="flex flex-col h-full">
-      {/* Page header */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold">Transacties importeren</h1>
         <p className="text-sm text-[var(--text-muted)] mt-1">
@@ -59,29 +54,10 @@ export default function ImportWizard({ dark }) {
         </p>
       </div>
 
-      {/* Account selector */}
-      <div className="mb-5 flex items-center gap-3">
-        <label className="text-sm text-[var(--text-muted)] whitespace-nowrap">Rekening:</label>
-        <select
-          value={accountIban}
-          onChange={(e) => setAccountIban(e.target.value)}
-          className="flex-1 max-w-sm bg-[var(--surface-2)] border border-[var(--border)] rounded-lg px-3 py-1.5 text-sm"
-        >
-          <option value="">— Selecteer rekening —</option>
-          {(accounts || []).map((a) => (
-            <option key={a.id} value={a.iban || ''}>
-              {a.name} {a.iban ? `(${a.iban})` : ''}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {/* Main layout: nav + content */}
       <div className="flex gap-8 flex-1 min-h-0">
         <WizardNav currentStep={step} onStep={setStep} canGoTo={canGoTo} />
 
         <div className="flex-1 min-w-0 flex flex-col">
-          {/* Step content */}
           <div className="flex-1 overflow-y-auto pb-6">
             {step === 1 && (
               <StepUpload
@@ -98,13 +74,14 @@ export default function ImportWizard({ dark }) {
                 activeFileIdx={activeFileIdx}
                 mappings={mappings}
                 onMappingsChange={updateMappings}
+                detectedIban={detectedIban}
               />
             )}
             {step === 3 && (
               <StepDuplicates
                 parsedFiles={parsedFiles}
                 mappings={mappings}
-                accountIban={accountIban}
+                detectedIban={detectedIban}
                 duplicateState={duplicateState}
                 onDuplicateStateChange={updateDuplicateState}
               />
@@ -121,16 +98,15 @@ export default function ImportWizard({ dark }) {
                 parsedFiles={parsedFiles}
                 mappings={mappings}
                 duplicateState={duplicateState}
-                accountIban={accountIban}
+                detectedIban={detectedIban}
                 onDone={() => {}}
               />
             )}
           </div>
 
-          {/* Bottom navigation */}
           <div className="flex items-center justify-between pt-4 border-t border-[var(--border)] mt-2 shrink-0">
             <button
-              onClick={prev}
+              onClick={() => setStep((s) => Math.max(1, s - 1))}
               disabled={step === 1}
               className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-[var(--border)] text-sm hover:bg-[var(--surface-2)] disabled:opacity-40 transition-colors"
             >
@@ -142,7 +118,7 @@ export default function ImportWizard({ dark }) {
 
             {step < 5 ? (
               <button
-                onClick={next}
+                onClick={() => setStep((s) => Math.min(5, s + 1))}
                 disabled={!canGoTo(step + 1)}
                 className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-40 transition-colors"
               >
