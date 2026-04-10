@@ -101,6 +101,13 @@ export const api = {
         account_iban: accountIban,
         external_ids: externalIds,
       }),
+    delete: (ids) => req('DELETE', '/api/transactions', { ids }),
+    patch:  (id, body) => req('PATCH', `/api/transactions/${id}`, body),
+  },
+
+  labels: {
+    list:   ()     => req('GET',  '/api/labels'),
+    create: (name) => req('POST', '/api/labels', { name }),
   },
 
   mappingProfiles: {

@@ -24,7 +24,10 @@ from app.categorizer import run_on_all
 from app.database import SessionLocal
 from app.importers.runner import import_file as do_import
 from app.importers.runner import preview_file as do_preview
-from app.models import Account, AccountAlias, CategorizationRule, Category, ColumnMappingProfile, RuleCondition, Transaction
+from app.models import (
+    Account, AccountAlias, CategorizationRule, Category,
+    ColumnMappingProfile, Label, RuleCondition, Transaction, TransactionLabel,
+)
 
 app = FastAPI(title="Fin Database API", version="1.0.0")
 
@@ -156,6 +159,57 @@ class MappedImportIn(BaseModel):
     account_iban: Optional[str] = None      # Optioneel: wordt ook uit transacties gehaald
     run_categorize: bool = False
     transactions: list[MappedTransactionIn]
+
+
+class TransactionDeleteIn(BaseModel):
+    ids: list[int]
+
+
+class TransactionPatchIn(BaseModel):
+    category_id: Optional[int] = None   # None = geen categorie
+    label_ids: list[int] = []            # Lege lijst = geen labels
+    notes: Optional[str] = None          # None = geen notities
+
+
+class LabelIn(BaseModel):
+    name: str
+
+
+# ------------------------------------------------------------------
+# Helpers (transaction serialisatie)
+# ------------------------------------------------------------------
+
+def _trx_dict(t: Transaction) -> dict:
+    """Serialiseer een Transaction naar een dict; vereist dat account, category en
+    transaction_labels (→ label) al geladen zijn via joinedload."""
+    cat = _cat(t.category) if t.category else None
+    labels = [
+        {"id": tl.label.id, "name": tl.label.name}
+        for tl in (t.transaction_labels or [])
+        if tl.label
+    ]
+    return {
+        "id": t.id,
+        "date": t.date.isoformat() if t.date else None,
+        "amount": str(t.amount),
+        "balance_after": str(t.balance_after) if t.balance_after is not None else None,
+        "counterparty_iban": t.counterparty_iban,
+        "counterparty_name": t.counterparty_name,
+        "description": t.description,
+        "notes": t.notes,
+        "category_id": t.category_id,
+        "category": cat,
+        "account_id": t.account_id,
+        "account_name": t.account.name if t.account else None,
+        "account_institution": (
+            t.account.institution.value
+            if t.account and t.account.institution else None
+        ),
+        "labels": labels,
+        "is_internal_transfer": t.is_internal_transfer,
+        "import_source": t.import_source.value if t.import_source else None,
+        "created_at": t.created_at.isoformat() if t.created_at else None,
+    }
 
 
 # ------------------------------------------------------------------
@@ -788,6 +842,7 @@ def list_transactions(
         .options(
             joinedload(Transaction.account),
             joinedload(Transaction.category),
+            joinedload(Transaction.transaction_labels).joinedload(TransactionLabel.label),
         )
     )
 
@@ -843,31 +898,105 @@ def list_transactions(
     offset = (page - 1) * page_size
     items = q.offset(offset).limit(page_size).all()
 
-    def _trx(t):
-        cat = _cat(t.category) if t.category else None
-        return {
-            "id": t.id,
-            "date": t.date.isoformat() if t.date else None,
-            "amount": str(t.amount),
-            "counterparty_iban": t.counterparty_iban,
-            "counterparty_name": t.counterparty_name,
-            "description": t.description,
-            "category_id": t.category_id,
-            "category": cat,
-            "account_id": t.account_id,
-            "account_name": t.account.name if t.account else None,
-            "is_internal_transfer": t.is_internal_transfer,
-            "import_source": t.import_source.value if t.import_source else None,
-            "created_at": t.created_at.isoformat() if t.created_at else None,
-        }
-
     return {
-        "items": [_trx(t) for t in items],
+        "items": [_trx_dict(t) for t in items],
         "total": total,
         "page": page,
         "page_size": page_size,
         "pages": max(1, (total + page_size - 1) // page_size),
     }
+
+
+# ------------------------------------------------------------------
+# Transactions — verwijderen (batch) en bewerken
+# ------------------------------------------------------------------
+
+@app.delete("/api/transactions", status_code=200)
+def delete_transactions(body: TransactionDeleteIn, db: Session = Depends(get_db)):
+    """Verwijder meerdere transacties tegelijk op basis van hun ID's."""
+    if not body.ids:
+        return {"deleted": 0}
+    count = (
+        db.query(Transaction)
+        .filter(Transaction.id.in_(body.ids))
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return {"deleted": count}
+
+
+@app.patch("/api/transactions/{transaction_id}")
+def patch_transaction(
+    transaction_id: int,
+    body: TransactionPatchIn,
+    db: Session = Depends(get_db),
+):
+    """Bewerk categorie, labels en/of notitie van één transactie."""
+    trx = (
+        db.query(Transaction)
+        .options(
+            joinedload(Transaction.account),
+            joinedload(Transaction.category),
+            joinedload(Transaction.transaction_labels).joinedload(TransactionLabel.label),
+        )
+        .filter(Transaction.id == transaction_id)
+        .first()
+    )
+    if not trx:
+        raise HTTPException(status_code=404, detail="Transactie niet gevonden")
+
+    # Categorie bijwerken (None = geen categorie)
+    trx.category_id = body.category_id
+
+    # Labels vervangen
+    db.query(TransactionLabel).filter(
+        TransactionLabel.transaction_id == transaction_id
+    ).delete(synchronize_session=False)
+    for lid in body.label_ids:
+        db.add(TransactionLabel(transaction_id=transaction_id, label_id=lid))
+
+    # Notitie bijwerken
+    trx.notes = body.notes or None
+
+    db.commit()
+
+    # Herlaad met relaties voor de response
+    trx = (
+        db.query(Transaction)
+        .options(
+            joinedload(Transaction.account),
+            joinedload(Transaction.category),
+            joinedload(Transaction.transaction_labels).joinedload(TransactionLabel.label),
+        )
+        .filter(Transaction.id == transaction_id)
+        .first()
+    )
+    return _trx_dict(trx)
+
+
+# ------------------------------------------------------------------
+# Labels
+# ------------------------------------------------------------------
+
+@app.get("/api/labels")
+def list_labels(db: Session = Depends(get_db)):
+    labels = db.query(Label).order_by(Label.name).all()
+    return [{"id": l.id, "name": l.name} for l in labels]
+
+
+@app.post("/api/labels", status_code=201)
+def create_label(body: LabelIn, db: Session = Depends(get_db)):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Label-naam mag niet leeg zijn")
+    existing = db.query(Label).filter(Label.name == name).first()
+    if existing:
+        return {"id": existing.id, "name": existing.name}
+    label = Label(name=name)
+    db.add(label)
+    db.commit()
+    db.refresh(label)
+    return {"id": label.id, "name": label.name}
 
 
 # ------------------------------------------------------------------
