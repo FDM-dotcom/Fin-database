@@ -2,19 +2,11 @@ import { useEffect, useState } from 'react'
 import { api } from '@/api'
 import { applyMappingToRows, computeExternalId, getDefaultMappings } from '@/lib/importHelpers'
 
-// ------------------------------------------------------------------
-// Helpers
-// ------------------------------------------------------------------
-
 function fmtAmt(v) {
   const n = parseFloat(v)
   if (isNaN(n)) return v || '—'
   return (n < 0 ? '−' : '+') + '€' + Math.abs(n).toFixed(2)
 }
-
-// ------------------------------------------------------------------
-// Transactie-kaart (één kant van het vergelijkingspaneel)
-// ------------------------------------------------------------------
 
 function TrxCard({ label, isNew, date, amount, name, iban, description }) {
   const n = parseFloat(amount)
@@ -33,24 +25,14 @@ function TrxCard({ label, isNew, date, amount, name, iban, description }) {
         <span className="tabular-nums text-xs font-mono text-[var(--text-muted)]">{date}</span>
         <span className={`font-mono text-sm font-semibold ${amtColor}`}>{fmtAmt(amount)}</span>
       </div>
-      {name && (
-        <div className="text-xs truncate">{name}</div>
-      )}
-      {iban && (
-        <div className="text-xs text-[var(--text-muted)] font-mono truncate">{iban}</div>
-      )}
-      {description && (
-        <div className="text-xs text-[var(--text-muted)] truncate">{description}</div>
-      )}
+      {name && <div className="text-xs truncate">{name}</div>}
+      {iban && <div className="text-xs text-[var(--text-muted)] font-mono truncate">{iban}</div>}
+      {description && <div className="text-xs text-[var(--text-muted)] truncate">{description}</div>}
     </div>
   )
 }
 
-// ------------------------------------------------------------------
-// Hoofdcomponent
-// ------------------------------------------------------------------
-
-export default function StepDuplicates({
+export default function DuplicatesStep({
   parsedFiles,
   mappings,
   detectedIban,
@@ -61,7 +43,6 @@ export default function StepDuplicates({
   const [checked, setChecked] = useState(false)
   const [error, setError] = useState(null)
 
-  // duplicateState: {rows, duplicates, excludedIndices}
   const {
     rows = [],
     duplicates = [],
@@ -71,10 +52,8 @@ export default function StepDuplicates({
   const dupCount = duplicates.length
   const toImportCount = rows.length - excludedIndices.size
 
-  // Automatisch controleren bij het betreden van stap 3
   useEffect(() => {
     if (parsedFiles.length === 0) return
-    // Sla over als al gecontroleerd (duplicateState is al gezet)
     if (duplicateState) {
       setChecked(true)
       return
@@ -88,13 +67,11 @@ export default function StepDuplicates({
     setError(null)
 
     try {
-      // Bouw gecombineerde rij-array over alle bestanden
       const allRows = []
       for (const pf of parsedFiles) {
         const fileMappings = mappings[pf.id] || getDefaultMappings(pf.bankType)
         const mapped = applyMappingToRows(pf.rows, fileMappings, pf.bankType)
         for (const row of mapped) {
-          // Bewaar _extId voor gebruik in stap 5 (import)
           const extId = await computeExternalId(row._raw, pf.bankType)
           allRows.push({
             ...row,
@@ -105,7 +82,6 @@ export default function StepDuplicates({
         }
       }
 
-      // Stuur genormaliseerde velden naar de backend voor content-gebaseerde matching
       const txsForCheck = allRows.map((row, idx) => ({
         idx,
         date:               row['Datum'] || '',
@@ -114,29 +90,13 @@ export default function StepDuplicates({
         description:        row['Transactiedetails'] || null,
       }))
 
-      console.log(
-        '[StepDuplicates] check-duplicates →',
-        txsForCheck.length,
-        'transacties, account:',
-        detectedIban || '(alle)',
-      )
-
       const result = await api.transactions.checkDuplicates(txsForCheck, detectedIban || null)
 
-      console.log(
-        '[StepDuplicates] ← resultaat:',
-        result.duplicates.length,
-        'duplicaten van',
-        txsForCheck.length,
-      )
-
-      // Verrijk duplicaten met de volledige rij-data
       const enriched = result.duplicates.map((d) => ({
         ...d,
         row: allRows[d.idx],
       }))
 
-      // Pre-exclude alle gevonden duplicaten
       const excludeSet = new Set(enriched.map((d) => d.idx))
 
       onDuplicateStateChange({
@@ -146,7 +106,7 @@ export default function StepDuplicates({
       })
       setChecked(true)
     } catch (e) {
-      console.error('[StepDuplicates] controle mislukt:', e)
+      console.error('[DuplicatesStep] controle mislukt:', e)
       setError(e.message || 'Controle mislukt')
     } finally {
       setLoading(false)
@@ -178,7 +138,6 @@ export default function StepDuplicates({
 
   return (
     <div className="flex flex-col gap-5">
-      {/* Header */}
       <div>
         <h2 className="text-lg font-semibold mb-1">Dubbele transacties</h2>
         <p className="text-sm text-[var(--text-muted)]">
@@ -187,7 +146,6 @@ export default function StepDuplicates({
         </p>
       </div>
 
-      {/* Samenvatting */}
       <div className="grid grid-cols-3 gap-3">
         <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-4 text-center">
           <div className="text-2xl font-bold text-green-400">
@@ -209,7 +167,6 @@ export default function StepDuplicates({
         </div>
       </div>
 
-      {/* Laden */}
       {loading && (
         <div className="flex items-center gap-2.5 text-sm text-[var(--text-muted)] bg-[var(--surface-2)] rounded-lg px-4 py-3">
           <span className="material-symbols-outlined animate-spin text-base shrink-0">
@@ -219,7 +176,6 @@ export default function StepDuplicates({
         </div>
       )}
 
-      {/* Foutmelding */}
       {error && (
         <div className="flex items-center gap-2 text-sm text-red-400 bg-red-400/10 border border-red-500/30 rounded-lg px-3 py-2.5">
           <span className="material-symbols-outlined text-base shrink-0">error</span>
@@ -227,7 +183,6 @@ export default function StepDuplicates({
         </div>
       )}
 
-      {/* Opnieuw-knop (na eerste check) */}
       {!loading && checked && (
         <button
           onClick={runCheck}
@@ -238,10 +193,8 @@ export default function StepDuplicates({
         </button>
       )}
 
-      {/* Duplicatenlijst */}
       {checked && duplicates.length > 0 && (
         <div>
-          {/* Toolbar */}
           <div className="flex items-center justify-between mb-3">
             <div className="text-sm font-medium">
               {dupCount} {dupCount === 1 ? 'duplicaat' : 'duplicaten'} gevonden
@@ -265,7 +218,6 @@ export default function StepDuplicates({
             </div>
           </div>
 
-          {/* Kaarten */}
           <div className="flex flex-col gap-2.5">
             {duplicates.map((d) => {
               const excl = excludedIndices.has(d.idx)
@@ -279,7 +231,6 @@ export default function StepDuplicates({
                   }`}
                 >
                   <div className="flex items-start gap-3">
-                    {/* Checkbox */}
                     <div className="pt-0.5 shrink-0">
                       <input
                         type="checkbox"
@@ -289,8 +240,6 @@ export default function StepDuplicates({
                         title="Uitsluiten van import"
                       />
                     </div>
-
-                    {/* Vergelijking */}
                     <div className="flex-1 flex items-stretch gap-2 min-w-0">
                       <TrxCard
                         label="Nieuw (CSV)"
@@ -301,11 +250,9 @@ export default function StepDuplicates({
                         iban={row['Naar IBAN'] || ''}
                         description={row['Transactiedetails'] || ''}
                       />
-
                       <div className="flex items-center shrink-0 text-[var(--text-muted)]">
                         <span className="material-symbols-outlined text-base">compare_arrows</span>
                       </div>
-
                       <TrxCard
                         label="Al aanwezig (DB)"
                         isNew={false}
@@ -317,8 +264,6 @@ export default function StepDuplicates({
                       />
                     </div>
                   </div>
-
-                  {/* Meta */}
                   <div className="mt-1.5 ml-7 text-[10px] text-[var(--text-muted)] flex gap-3">
                     <span>Bestand: {row._fileName}</span>
                     {match.account_name && <span>Rekening: {match.account_name}</span>}
@@ -330,7 +275,6 @@ export default function StepDuplicates({
         </div>
       )}
 
-      {/* Geen duplicaten */}
       {checked && duplicates.length === 0 && (
         <div className="flex items-center gap-2 text-sm text-green-400">
           <span className="material-symbols-outlined text-base">check_circle</span>

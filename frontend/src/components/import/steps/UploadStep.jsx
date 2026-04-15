@@ -21,11 +21,6 @@ function BankBadge({ bankType }) {
 }
 
 async function parseFile(file) {
-  // Rabobank: windows-1252 encoding
-  const isRabo = file.name.toLowerCase().includes('rabo') ||
-    file.name.toLowerCase().endsWith('.csv')
-
-  // Try windows-1252 first for Rabobank, fall back to UTF-8
   let text
   try {
     const buf = await file.arrayBuffer()
@@ -57,7 +52,7 @@ async function parseFile(file) {
   })
 }
 
-export default function StepUpload({ parsedFiles, onFilesChange }) {
+export default function UploadStep({ parsedFiles, onFilesChange }) {
   const inputRef = useRef(null)
   const [dragging, setDragging] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -67,7 +62,6 @@ export default function StepUpload({ parsedFiles, onFilesChange }) {
     setLoading(true)
     try {
       const results = await Promise.all(Array.from(fileList).map(parseFile))
-      // Deduplicate by filename
       const existing = new Set(parsedFiles.map((f) => f.fileName))
       const newFiles = results.filter((r) => !existing.has(r.fileName))
       onFilesChange([...parsedFiles, ...newFiles])
@@ -149,7 +143,6 @@ export default function StepUpload({ parsedFiles, onFilesChange }) {
               key={pf.id}
               className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)] overflow-hidden"
             >
-              {/* Header row */}
               <div className="flex items-center gap-3 px-4 py-3">
                 <span className="material-symbols-outlined text-base text-[var(--text-muted)]">
                   table_view
@@ -181,7 +174,6 @@ export default function StepUpload({ parsedFiles, onFilesChange }) {
                 </button>
               </div>
 
-              {/* Preview table */}
               {expanded[pf.id] && pf.rows.length > 0 && (
                 <div className="border-t border-[var(--border)] overflow-x-auto">
                   <table className="text-xs w-full">

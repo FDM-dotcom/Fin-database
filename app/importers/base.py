@@ -71,6 +71,11 @@ class BaseImporter(ABC):
             a.iban: a.display_name for a in db.query(AccountAlias).all()
         }
 
+        # Laad alle bekende eigen IBAN-rekeningen voor transfer-detectie
+        known_ibans: set[str] = {
+            a.iban for a in db.query(Account).filter(Account.iban.isnot(None)).all()
+        }
+
         for row in rows:
             try:
                 iban = account_iban or row.get("own_iban")
@@ -108,6 +113,14 @@ class BaseImporter(ABC):
                 if cp_name is None and cp_iban:
                     cp_name = aliases.get(cp_iban)
 
+                own_iban_norm = (iban or "").strip().upper()
+                cp_iban_norm = (cp_iban or "").strip().upper()
+                is_transfer = bool(
+                    own_iban_norm and cp_iban_norm
+                    and own_iban_norm in known_ibans
+                    and cp_iban_norm in known_ibans
+                )
+
                 trx = Transaction(
                     account_id=account.id,
                     date=row["date"],
@@ -117,7 +130,7 @@ class BaseImporter(ABC):
                     counterparty_iban=cp_iban,
                     counterparty_name=cp_name,
                     description=row.get("description") or None,
-                    is_internal_transfer=False,
+                    is_internal_transfer=is_transfer,
                     import_source=self.source_name,
                     raw_import_data=row["raw_import_data"],
                     external_id=row["external_id"],

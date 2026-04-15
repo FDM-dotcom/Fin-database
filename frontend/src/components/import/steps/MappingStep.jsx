@@ -28,18 +28,13 @@ function MappingRow({ target, mapping, availableHeaders, onUpdate }) {
 
   return (
     <div className="flex items-start gap-3 py-2.5 border-b border-[var(--border)] last:border-0">
-      {/* Target column label */}
       <div className="w-44 shrink-0 text-sm font-medium text-[var(--text-primary)] pt-1">
         {target}
       </div>
-
-      {/* Source columns + add */}
       <div className="flex-1 flex flex-wrap items-center gap-1.5">
         {mapping.sourceColumns.map((col) => (
           <SourceBadge key={col} col={col} onRemove={() => removeSource(col)} />
         ))}
-
-        {/* Add source */}
         <div className="relative">
           <button
             onClick={() => setOpen((v) => !v)}
@@ -66,8 +61,6 @@ function MappingRow({ target, mapping, availableHeaders, onUpdate }) {
             </div>
           )}
         </div>
-
-        {/* Separator (only when multiple sources) */}
         {mapping.sourceColumns.length > 1 && (
           <div className="flex items-center gap-1 text-xs text-[var(--text-muted)]">
             <span>sep:</span>
@@ -83,7 +76,7 @@ function MappingRow({ target, mapping, availableHeaders, onUpdate }) {
   )
 }
 
-export default function StepMapping({ parsedFiles, activeFileIdx, mappings, onMappingsChange, onActiveFileChange, detectedIban }) {
+export default function MappingStep({ parsedFiles, activeFileIdx, mappings, onMappingsChange, onActiveFileChange, detectedIban }) {
   const [profiles, setProfiles] = useState([])
   const [saveModal, setSaveModal] = useState(false)
   const [profileName, setProfileName] = useState('')
@@ -96,7 +89,6 @@ export default function StepMapping({ parsedFiles, activeFileIdx, mappings, onMa
     api.mappingProfiles.list().then(setProfiles).catch(console.error)
   }, [])
 
-  // Initialize mappings when file changes
   useEffect(() => {
     if (!activeFile) return
     if (!mappings[activeFile.id]) {
@@ -156,7 +148,6 @@ export default function StepMapping({ parsedFiles, activeFileIdx, mappings, onMa
         </p>
       </div>
 
-      {/* Gedetecteerd eigen IBAN */}
       {detectedIban ? (
         <div className="flex items-center gap-2 text-sm bg-green-500/10 border border-green-500/30 rounded-lg px-3 py-2">
           <span className="material-symbols-outlined text-base text-green-400">account_balance</span>
@@ -172,7 +163,6 @@ export default function StepMapping({ parsedFiles, activeFileIdx, mappings, onMa
         </div>
       )}
 
-      {/* File tabs (multiple files) */}
       {parsedFiles.length > 1 && (
         <div className="flex flex-col gap-2">
           <div className="flex gap-1 flex-wrap">
@@ -190,7 +180,6 @@ export default function StepMapping({ parsedFiles, activeFileIdx, mappings, onMa
               </button>
             ))}
           </div>
-          {/* Toon info-banner als er meerdere bestanden van hetzelfde banktype zijn */}
           {parsedFiles.filter((f) => f.bankType === activeFile.bankType).length > 1 && (
             <div className="flex items-center gap-2 text-xs bg-blue-500/10 border border-blue-500/30 rounded-lg px-3 py-2">
               <span className="material-symbols-outlined text-sm text-blue-400">info</span>
@@ -204,7 +193,6 @@ export default function StepMapping({ parsedFiles, activeFileIdx, mappings, onMa
         </div>
       )}
 
-      {/* Saved profiles */}
       {bankProfiles.length > 0 && (
         <div>
           <div className="text-xs text-[var(--text-muted)] mb-1.5 font-medium">Opgeslagen profielen</div>
@@ -230,8 +218,7 @@ export default function StepMapping({ parsedFiles, activeFileIdx, mappings, onMa
         </div>
       )}
 
-      {/* Mapping rows */}
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)] divide-y-0 overflow-hidden">
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)] overflow-hidden">
         <div className="px-4 py-2 border-b border-[var(--border)] flex items-center justify-between">
           <span className="text-xs font-medium text-[var(--text-muted)]">Doelkolom → Bronkolommen</span>
           <button
@@ -242,7 +229,6 @@ export default function StepMapping({ parsedFiles, activeFileIdx, mappings, onMa
             Profiel opslaan
           </button>
         </div>
-
         <div className="px-4">
           {fileMappings.map((m) => (
             <MappingRow
@@ -256,7 +242,6 @@ export default function StepMapping({ parsedFiles, activeFileIdx, mappings, onMa
         </div>
       </div>
 
-      {/* Save modal */}
       {saveModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-[var(--surface)] rounded-xl border border-[var(--border)] p-6 w-80 shadow-2xl">

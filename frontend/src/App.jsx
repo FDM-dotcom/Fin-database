@@ -3,8 +3,7 @@ import { useState, useEffect } from 'react'
 import Sidebar from './components/Sidebar'
 import RulesOverview from './pages/RulesOverview'
 import RuleConfiguration from './pages/RuleConfiguration'
-import ImportData from './pages/ImportData'
-import ImportWizard from './pages/ImportWizard'
+import Import from './pages/Import'
 import Dashboard from './pages/Dashboard'
 import Configuratie from './pages/Configuratie'
 import Transactions from './pages/Transactions'
@@ -26,8 +25,7 @@ export default function App() {
           <Route path="/rules" element={<RulesOverview dark={dark} />} />
           <Route path="/rules/new" element={<RuleConfiguration dark={dark} />} />
           <Route path="/rules/:id" element={<RuleConfiguration dark={dark} />} />
-          <Route path="/import" element={<ImportWizard dark={dark} />} />
-          <Route path="/import/legacy" element={<ImportData dark={dark} />} />
+          <Route path="/import" element={<Import dark={dark} />} />
           <Route path="/transacties" element={<Transactions dark={dark} />} />
           <Route path="/budget" element={<Budget dark={dark} />} />
           <Route path="/configuratie" element={<Configuratie dark={dark} />} />

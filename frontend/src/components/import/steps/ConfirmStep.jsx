@@ -2,33 +2,27 @@ import { useState } from 'react'
 import { api } from '@/api'
 import { applyMappingToRows, getDefaultMappings } from '@/lib/importHelpers'
 
-// Rabobank en bunq worden door de Python-backend zelf verwerkt (eigen importer).
-// ING, ABN AMRO en overigen gaan als voorgemapte JSON via /api/import/mapped.
 const NATIVE_BANKS = ['rabobank', 'bunq']
 
-export default function StepConfirm({ parsedFiles, mappings, duplicateState, detectedIban, onDone }) {
+export default function ConfirmStep({ parsedFiles, mappings, duplicateState, detectedIban, onDone }) {
   const [runCategorize, setRunCategorize] = useState(false)
   const [importing, setImporting] = useState(false)
   const [results, setResults] = useState(null)
   const [error, setError] = useState(null)
 
-  // duplicateState gebruikt nu excludedIndices (op basis van array-index, niet _extId)
   const { excludedIndices = new Set(), rows = [] } = duplicateState || {}
   const toImport = rows.filter((_, i) => !excludedIndices.has(i))
 
-  // Haal actieve rijen per bestand op; val terug op herberekening als stap 3 is overgeslagen
   function getFileActiveRows(pf) {
     if (rows.length > 0) {
       return toImport.filter((r) => r._fileName === pf.fileName)
     }
-    // Fallback: stap 3 overgeslagen — alle rijen importeren
     const fileMappings = mappings[pf.id] || getDefaultMappings(pf.bankType)
     return applyMappingToRows(pf.rows, fileMappings, pf.bankType)
   }
 
   const byFile = parsedFiles.map((pf) => ({ pf, count: getFileActiveRows(pf).length }))
 
-  // Bepaal het eigen IBAN per bestand: detectedIban (uit mappings) of eerste rij Van IBAN
   function getOwnIban(pf) {
     if (detectedIban) return detectedIban
     const fileMappings = mappings[pf.id] || getDefaultMappings(pf.bankType)
@@ -52,13 +46,9 @@ export default function StepConfirm({ parsedFiles, mappings, duplicateState, det
         if (activeRows.length === 0) continue
 
         if (NATIVE_BANKS.includes(pf.bankType)) {
-          // Rabobank/bunq: stuur het ruwe CSV-bestand naar de Python-importer.
-          // Geef het gedetecteerde IBAN mee — de backend slaat import over als
-          // het account niet bestaat en maakt het anders automatisch aan.
           const result = await api.import(pf.file, ownIban || undefined, runCategorize)
           allResults.push({ file: pf.fileName, ...result })
         } else {
-          // ING, ABN AMRO, onbekend: stuur voorgemapte JSON-transacties.
           const transactions = activeRows.map((row) => ({
             date: row['Datum'] || '',
             amount: row['Bedrag'] || '0',
@@ -101,7 +91,6 @@ export default function StepConfirm({ parsedFiles, mappings, duplicateState, det
         </p>
       </div>
 
-      {/* Summary */}
       <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)] divide-y divide-[var(--border)]">
         <div className="px-4 py-3 flex justify-between text-sm">
           <span className="text-[var(--text-muted)]">Eigen rekening (IBAN)</span>
@@ -135,7 +124,6 @@ export default function StepConfirm({ parsedFiles, mappings, duplicateState, det
         <div className="flex items-start gap-2 text-sm text-orange-400 bg-orange-400/10 rounded-lg px-4 py-3">
           <span className="material-symbols-outlined text-base shrink-0">warning</span>
           Geen eigen IBAN gedetecteerd. Ga terug naar stap 2 en koppel de kolom <strong>Van IBAN</strong>.
-          De backend kan het account dan automatisch aanmaken.
         </div>
       )}
 
@@ -212,6 +200,13 @@ export default function StepConfirm({ parsedFiles, mappings, duplicateState, det
               )}
             </div>
           ))}
+          <button
+            onClick={() => window.location.href = '/transactions'}
+            className="self-start mt-1 px-4 py-2 rounded-lg border border-[var(--border)] text-sm hover:bg-[var(--surface-2)] flex items-center gap-1.5 transition-colors"
+          >
+            <span className="material-symbols-outlined text-base">receipt_long</span>
+            Ga naar transacties
+          </button>
         </div>
       )}
     </div>

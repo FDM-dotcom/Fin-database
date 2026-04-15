@@ -210,6 +210,7 @@ def _trx_dict(t: Transaction) -> dict:
             if t.account and t.account.institution else None
         ),
         "labels": labels,
+        "currency": t.currency,
         "is_internal_transfer": t.is_internal_transfer,
         "import_source": t.import_source.value if t.import_source else None,
         "created_at": t.created_at.isoformat() if t.created_at else None,
@@ -1366,6 +1367,12 @@ def import_mapped(body: MappedImportIn, db: Session = Depends(get_db)):
     # Laad aliassen voor verrijking tegenpartijnaam
     aliases = {a.iban: a.display_name for a in db.query(AccountAlias).all()}
 
+    # Laad bekende eigen IBAN-rekeningen voor interne transfer-detectie
+    from app.models import Account as AccountModel
+    known_ibans: set = {
+        a.iban for a in db.query(AccountModel).filter(AccountModel.iban.isnot(None)).all()
+    }
+
     inserted = 0
     skipped = 0
     errors: list[str] = []
@@ -1424,6 +1431,14 @@ def import_mapped(body: MappedImportIn, db: Session = Depends(get_db)):
             }
             import_source = source_map.get(trx_in.bank_type, ImportSourceType.manual)
 
+            own_iban_norm = trx_own_iban.upper()
+            cp_iban_norm = (cp_iban or "").upper()
+            is_transfer = bool(
+                own_iban_norm and cp_iban_norm
+                and own_iban_norm in known_ibans
+                and cp_iban_norm in known_ibans
+            )
+
             trx = Transaction(
                 account_id=trx_account.id,
                 date=trx_date,
@@ -1434,6 +1449,7 @@ def import_mapped(body: MappedImportIn, db: Session = Depends(get_db)):
                 external_id=ext_id,
                 import_source=import_source,
                 raw_import_data=trx_in.raw or {},
+                is_internal_transfer=is_transfer,
             )
             db.add(trx)
             inserted += 1
